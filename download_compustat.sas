@@ -1,9 +1,14 @@
 PROC SQL NOPRINT;
-SELECT SCAN(xpath,-1,'\') INTO :progname FROM sashelp.vextfl
+SELECT SCAN(TRANWRD(xpath,'\','/'),-1,'/') INTO :progname FROM sashelp.vextfl
 	WHERE UPCASE(xpath) LIKE '%.SAS';
 SELECT xpath INTO :progdir FROM sashelp.vextfl 
 	WHERE UPCASE(xpath) LIKE '%.SAS';
 QUIT;
+%PUT ;
+%PUT &progname;
+%PUT ;
+%PUT &progdir;
+%PUT ;
 %LET pwd = %SUBSTR(&progdir,1,%EVAL(%LENGTH(&progdir) - %LENGTH(&progname)-1));
 %PUT &pwd;
 
