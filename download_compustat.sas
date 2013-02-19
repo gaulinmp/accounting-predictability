@@ -1,8 +1,8 @@
 PROC SQL NOPRINT;
 SELECT SCAN(TRANWRD(xpath,'\','/'),-1,'/') INTO :progname FROM sashelp.vextfl
-	WHERE UPCASE(xpath) LIKE '%.SAS';
+    WHERE UPCASE(xpath) LIKE '%.SAS';
 SELECT xpath INTO :progdir FROM sashelp.vextfl 
-	WHERE UPCASE(xpath) LIKE '%.SAS';
+    WHERE UPCASE(xpath) LIKE '%.SAS';
 QUIT;
 %PUT ;
 %PUT &progname;
@@ -46,7 +46,7 @@ Variables taken from:
     By David Hirshleifer, Kewei Hou,  Siew Hong Teoh, JFE 2009
     Variables same as Sloan 1996
 */
-
+%MACRO skipdownload();
 %WRDS("open");
 RSUBMIT;
     PROC SQL;
@@ -54,7 +54,7 @@ RSUBMIT;
         SELECT f.gvkey, f.datadate AS date
             ,f.fyearq, f.fqtr, f.fyr AS FYE_MONTH
             ,nam.sic, nam.naics
-			,ATq AS AT, LTq AS LT /*
+            ,ATq AS AT, LTq AS LT /*
             EARN1 = Earnings per share (*/ ,EPSPXq AS EPSPX /*) 
                      * Common shares to calculate EPS (*/ ,CSHPRq AS CSHPRI /*)
             CFO1 = Operating Activities / Net CF (*/ ,OANCFy AS OANCF /*) [Post 1987]
@@ -83,13 +83,13 @@ RSUBMIT;
         /*AND DATADATE >= '01JAN1960'd
         AND DATADATE <= '01JAN2012'd
         AND nam.sic NOT LIKE "6%"*/
-		ORDER BY gvkey, date;
+        ORDER BY gvkey, date;
 
-		CREATE TABLE funda AS
+        CREATE TABLE funda AS
         SELECT f.gvkey, f.datadate AS date
             ,f.fyear, f.fyr AS FYE_MONTH
             ,nam.sic, nam.naics
-			,AT, LT /*
+            ,AT, LT /*
             EARN1 = Earnings per share (*/ ,EPSPX /*) 
                      * Common shares to calculate EPS (*/ ,CSHPRI /*)
             CFO1 = Operating Activities / Net Cash Flow (*/ ,OANCF /*) [Post 1987]
@@ -118,15 +118,15 @@ RSUBMIT;
         /*AND DATADATE >= '01JAN1960'd
         AND DATADATE <= '01JAN2012'd
         AND nam.sic NOT LIKE "6%"*/
-		ORDER BY gvkey, date;
-		
-		CREATE TABLE crsp AS
-		SELECT DISTINCT t1.gvkey, dsf.permno, dsf.date
+        ORDER BY gvkey, date;
+        
+        CREATE TABLE crsp AS
+        SELECT DISTINCT t1.gvkey, dsf.permno, dsf.date
             ,ABS(dsf.prc) AS price, dsf.ret, dsf.retx
-			,dsf.shrout
-		FROM (SELECT DISTINCT gvkey FROM
-				(SELECT DISTINCT gvkey FROM funda 
-				UNION SELECT DISTINCT gvkey FROM fundq)) AS t1
+            ,dsf.shrout
+        FROM (SELECT DISTINCT gvkey FROM
+                (SELECT DISTINCT gvkey FROM funda 
+                UNION SELECT DISTINCT gvkey FROM fundq)) AS t1
         LEFT JOIN crsp.CCMXPF_LINKTABLE AS lnk 
             ON lnk.gvkey = t1.gvkey
         LEFT JOIN crsp.dsf AS dsf
@@ -146,85 +146,101 @@ RSUBMIT;
     RUN;
 ENDRSUBMIT;
 %WRDS("close");
+%MEND skipdownload;
 
-* Change this to fundq to get quarterly. Don't expect it to work. ;
+* Change this to fundq to get quarterly. Don't expect it'll work. ;
 %LET funda = _funda;
 
 PROC SORT DATA=&funda;BY gvkey fyear;RUN;
 
 PROC SQL;
-	CREATE TABLE dropfirms1 AS
-	SELECT UNIQUE count(*) AS drop,gvkey
-	FROM &funda
-	WHERE fyear NE .
-	GROUP BY gvkey,fyear
-	HAVING drop > 1;
-	
-	CREATE TABLE dropfirms2 AS
-	SELECT UNIQUE min(AT) as drop, gvkey
-	FROM &funda
-	GROUP BY gvkey
-	HAVING drop eq .;
+    CREATE TABLE dropfirms1 AS
+    SELECT UNIQUE count(*) AS drop,gvkey
+    FROM &funda
+    WHERE fyear NE .
+    GROUP BY gvkey,fyear
+    HAVING drop > 1;
+    
+    CREATE TABLE dropfirms2 AS
+    SELECT UNIQUE min(AT) as drop, gvkey
+    FROM &funda
+    GROUP BY gvkey
+    HAVING drop eq .;
 
-	CREATE TABLE fnda_1_initfunda AS
-	SELECT *,count(*) AS lifespan 
-	FROM &funda
-	WHERE fyear ne . 
-		AND gvkey NOT IN (SELECT gvkey FROM dropfirms1)
-		AND gvkey NOT IN (SELECT gvkey FROM dropfirms2)
-	GROUP BY gvkey
-	ORDER BY gvkey,fyear;
+    CREATE TABLE fnda_1_initfunda AS
+    SELECT *,count(*) AS lifespan 
+    FROM &funda
+    WHERE fyear ne . 
+        AND gvkey NOT IN (SELECT gvkey FROM dropfirms1)
+        AND gvkey NOT IN (SELECT gvkey FROM dropfirms2)
+    GROUP BY gvkey
+    ORDER BY gvkey,fyear;
 
-	DELETE FROM fnda_1_initfunda
-	WHERE lifespan < 2;
+    DELETE FROM fnda_1_initfunda
+    WHERE lifespan < 2;
 
-	DROP TABLE dropfirms1,dropfirms2;	
+    DROP TABLE dropfirms1,dropfirms2;	
 QUIT;
 
 OPTIONS NONOTES;
 PROC EXPAND DATA=fnda_1_initfunda OUT=fnda_2_fundadiffs 
-		FROM=DAY METHOD=NONE;
-	BY gvkey;
-	ID fyear;
-	CONVERT act=dact / TRANSFORMOUT=( DIF 1 );
-	CONVERT dlc=ddlc / TRANSFORMOUT=( DIF 1 );
-	CONVERT lct=dlct / TRANSFORMOUT=( DIF 1 );
-	CONVERT ch=dch / TRANSFORMOUT=( DIF 1 );
-	CONVERT che=dche / TRANSFORMOUT=( DIF 1 );
-	CONVERT txp=dtxp / TRANSFORMOUT=( DIF 1 );
-	RUN;
-	OPTIONS NOTES;
+        FROM=DAY METHOD=NONE;
+    BY gvkey;
+    ID fyear;
+    CONVERT act=dact / TRANSFORMOUT=( DIF 1 );
+    CONVERT dlc=ddlc / TRANSFORMOUT=( DIF 1 );
+    CONVERT lct=dlct / TRANSFORMOUT=( DIF 1 );
+    CONVERT ch=dch / TRANSFORMOUT=( DIF 1 );
+    CONVERT che=dche / TRANSFORMOUT=( DIF 1 );
+    CONVERT txp=dtxp / TRANSFORMOUT=( DIF 1 );
+    RUN;
+    OPTIONS NOTES;
 
 DATA fnda_3_vars; SET fnda_2_fundadiffs;
-	EARN1 = EPSPX * CSHPRI;
-	CFO1_Pre1989 = FOPT-dACT-dDLC+dLCT+dCH;
-	CFO1_Pre1989_coalesced = COALESCE(FOPT,0)
-			-COALESCE(dACT,0)
-			-COALESCE(dDLC,0)
-			+COALESCE(dLCT,0)
-			+COALESCE(dCH ,0);
-	CFO1 = COALESCE(OANCF,CFO1_Pre1989);
-	CFO1_coalesced = COALESCE(CFO1,CFO1_Pre1989_coalesced);
-	TA1 = NI+DP-CFO1;
-	TA1_coalesced = NI+DP-CFO1_coalesced;
+    EARN1 = EPSPX * CSHPRI;
+    CFO1_Pre1989 = FOPT-dACT-dDLC+dLCT+dCH;
+    CFO1_Pre1989_coalesced = COALESCE(FOPT,0)
+            -COALESCE(dACT,0)
+            -COALESCE(dDLC,0)
+            +COALESCE(dLCT,0)
+            +COALESCE(dCH ,0);
+    CFO1 = COALESCE(OANCF,CFO1_Pre1989);
+    CFO1_coalesced = COALESCE(CFO1,CFO1_Pre1989_coalesced);
+    TA1 = NI+DP-CFO1;
+    TA1_coalesced = NI+DP-CFO1_coalesced;
 
-	EARN2 = OIADP;
+    EARN2 = OIADP;
     TA2 = dACT - dCHE - dLCT + dDLC + dTXP - DP;
-	CFO2 = EARN2 - TA2;
-	KEEP gvkey fyear date fye_month sic naics at lt
-		earn1 cfo1 ta1 earn2 ta2 cfo2;
-	RUN;
-	PROC SORT DATA=fnda_3_vars;BY gvkey fyear;RUN;
+    CFO2 = EARN2 - TA2;
+    KEEP gvkey fyear date fye_month sic naics at lt
+        earn1 cfo1 ta1 earn2 ta2 cfo2;
+    RUN;
+    PROC SORT DATA=fnda_3_vars;BY gvkey fyear;RUN;
+
+PROC SORT DATA=_dsf;BY permno date;RUN;
 
 PROC SQL;
-	CREATE TABLE dsf_1_logrets AS
-	SELECT gvkey,permno,YEAR(date) as year
-		,EXP(SUM(LOG(1+RET)))-1 AS yrret
-		,EXP(SUM(LOG(1+RET)))-1 AS yrretx
-		,price,shrout, date
-	FROM _dsf
-	WHERE date ne . AND ret > -9999
-	GROUP BY permno,year
-	HAVING date = MAX(date);
+    CREATE TABLE dsf_1_logrets AS
+    SELECT DISTINCT gvkey,permno,YEAR(date) as year
+        ,EXP(SUM(LOG(1+RET)))-1 AS ret
+        ,EXP(SUM(LOG(1+RET)))-1 AS retx
+        ,price,shrout, date, COUNT(*) AS numdays
+    FROM _dsf
+    WHERE date ne . AND ret > -9999
+    GROUP BY permno,year
+    HAVING date = MAX(date);
+
+    CREATE TABLE dropfirms AS
+    SELECT DISTINCT gvkey,permno
+    FROM (SELECT DISTINCT gvkey,permno FROM dsf_1_logrets)
+    GROUP BY gvkey
+    HAVING count(*)>1;
+
+    CREATE TABLE dsf_2_goodfirms AS
+    SELECT DISTINCT *
+    FROM dsf_1_logrets
+    WHERE gvkey NOT IN (SELECT DISTINCT gvkey FROM dropfirms);
+
+    DROP TABLE dropfirms;
 QUIT;
 
