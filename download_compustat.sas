@@ -46,7 +46,7 @@ Variables taken from:
     By David Hirshleifer, Kewei Hou,  Siew Hong Teoh, JFE 2009
     Variables same as Sloan 1996
 */
-
+%MACRO skipdownload();
 %WRDS("open");
 RSUBMIT;
     PROC SQL;
@@ -146,6 +146,7 @@ RSUBMIT;
     RUN;
 ENDRSUBMIT;
 %WRDS("close");
+%MEND skipdownload;
 
 * Change this to fundq to get quarterly. Don't expect it to work. ;
 %LET funda = _funda;
@@ -215,6 +216,8 @@ DATA fnda_3_vars; SET fnda_2_fundadiffs;
 		earn1 cfo1 ta1 earn2 ta2 cfo2;
 	RUN;
 	PROC SORT DATA=fnda_3_vars;BY gvkey fyear;RUN;
+
+PROC SORT DATA=_dsf;BY permno date;RUN;
 
 PROC SQL;
 	CREATE TABLE dsf_1_logrets AS
