@@ -1,7 +1,8 @@
-%let data_dir = D:/SAS/return_predictability;
-%let code_dir = D:/Dropbox/Documents/School/Projects/Return_Predictability_of_Earnings;
+%let base_dir = /home/mpg1/projects/accounting_returns;
+%let data_dir = &base_dir/data;
+%let code_dir = &base_dir/accounting-predictability;
 libname USER "&data_dir";
-%INCLUDE "D:/Dropbox/Documents/School/MACROS.SAS";
+%INCLUDE "&base_dir/MACROS.SAS";
 
 /*
 Variables taken from:
@@ -36,7 +37,7 @@ Variables taken from:
     Variables same as Sloan 1996
 */
 
-%WRDS("open");
+%WRDS("don't open");
 RSUBMIT;
     PROC SQL;
         CREATE TABLE fundq AS
@@ -109,7 +110,7 @@ RSUBMIT;
         AND nam.sic NOT LIKE "6%"*/
 		ORDER BY gvkey, date;
 		
-		*CREATE TABLE crsp AS
+		CREATE TABLE crsp AS
 		SELECT DISTINCT t1.gvkey, dsf.permno, dsf.date
             ,ABS(dsf.prc) AS price, dsf.ret, dsf.retx
 		FROM (SELECT DISTINCT gvkey FROM
@@ -128,30 +129,18 @@ RSUBMIT;
         DATA= funda
         OUT= funda;
     RUN;
-    *PROC DOWNLOAD
+    PROC DOWNLOAD
         DATA= crsp
         OUT= crsp_sauce;
     RUN;
 ENDRSUBMIT;
 %WRDS("close");
 
-PROC SORT DATA=fundq;BY gvkey fyearq fqtr;RUN;
-PROC SQL;
-	CREATE TABLE tmp AS
-	SELECT *, count(*) AS goramultiples, MAX(fye_month)-MIN(fye_month) AS poo
-	FROM fundq 
-	GROUP BY gvkey,fyearq, fqtr
-	HAVING goramultiples > 1;
-
-	CREATE TABLE tmp2 AS
-	SELECT * FROM fundq 
-	WHERE gvkey IN (SELECT UNIQUE gvkey FROM tmp WHERE poo>=9);
-QUIT;
-
+PROC SORT DATA=funda;BY gvkey fyear;RUN;
 
 PROC SQL;
-	*CREATE TABLE tmp_q AS
-	SELECT gvkey, date, fyearq AS fyear, fye_month,sic,naics
+	CREATE TABLE tmp_q AS
+	SELECT gvkey, date, fyear, fye_month,sic,naics
 		,EPSPXq * CSHPRq AS earn1
 		,OANCFy AS CFO1_a
 		,FFOq-ACTq-DLCq+LCTq+CHq AS CFO1
@@ -160,5 +149,5 @@ PROC SQL;
 			+COALESCE(CHq,0) AS CFO1_collapsed
 		,NIq+DPq-CALCULATED CFO1_collapsed AS ta1
 		,OAIDPq AS earn2
-	FROM fundq;
+	FROM funda;
 QUIT;
