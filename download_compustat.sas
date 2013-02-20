@@ -246,4 +246,3 @@ PROC SQL;
 
     DROP TABLE dropfirms;
 QUIT;
-
