@@ -219,8 +219,6 @@ DATA fnda_3_vars; SET fnda_2_fundadiffs;
 
 PROC SORT DATA=_dsf;BY permno date;RUN;
 
-PROC SORT DATA=_dsf;BY permno date;RUN;
-
 PROC SQL;
     CREATE TABLE dsf_1_logrets AS
     SELECT DISTINCT gvkey,permno,YEAR(date) as year
