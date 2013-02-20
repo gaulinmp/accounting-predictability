@@ -14,6 +14,7 @@ QUIT;
 
 %INCLUDE "&pwd/preamble.sas";
 
+%MACRO DEBUG_already_run();
 /*
 Variables taken from:
 
@@ -46,7 +47,6 @@ Variables taken from:
     By David Hirshleifer, Kewei Hou,  Siew Hong Teoh, JFE 2009
     Variables same as Sloan 1996
 */
-%MACRO skipdownload();
 %WRDS("open");
 RSUBMIT;
     PROC SQL;
@@ -146,7 +146,6 @@ RSUBMIT;
     RUN;
 ENDRSUBMIT;
 %WRDS("close");
-%MEND skipdownload;
 
 * Change this to fundq to get quarterly. Don't expect it'll work. ;
 %LET funda = _funda;
@@ -229,7 +228,11 @@ PROC SQL;
     WHERE date ne . AND ret > -9999
     GROUP BY permno,year
     HAVING date = MAX(date);
+QUIT;
 
+%MEND DEBUG_already_run;
+
+PROC SQL;
     CREATE TABLE dropfirms AS
     SELECT DISTINCT gvkey,permno
     FROM (SELECT DISTINCT gvkey,permno FROM dsf_1_logrets)
