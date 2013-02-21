@@ -17,9 +17,19 @@ QUIT;
 %LET divide_month = 8;
 
 %MACRO DEBUG_already_run();
+%MEND DEBUG_already_run;
 /*
 Variables taken from:
 
+Book Value of equity:
+    1) CEQ: Item 60, Common/Ordinary Equity - Total
+    2) CEQL: Item 235, Common Equity / Liquidation Value
+Net Income (Vuolteenaho)
+    1) NI: Item 172, Net Income (Loss)
+    2) Change in BVE + Dividends (D.BVE + DVP/DVC) (Preferred/Common)
+Book Debt:
+    1) Current Liabilities(DLC/#34) + Total Long Term Debt(DLTT/#9) + Preferred Stock (PSTK/#130)
+    
 1)  The Persistence and Pricing of Earnings, Accruals, and Cash Flows When Firms Have Large Book-Tax Differences
     By Michelle Hanlon, TAR 2005
     EARN1 = Earnings per share (EPSPXq) 
@@ -52,46 +62,14 @@ Variables taken from:
 %WRDS("open");
 RSUBMIT;
     PROC SQL;
-        CREATE TABLE fundq AS
-        SELECT f.gvkey, f.datadate AS date
-            ,f.fyearq, f.fqtr, f.fyr AS FYE_MONTH
-            ,nam.sic, nam.naics
-            ,ATq AS AT, LTq AS LT /*
-            EARN1 = Earnings per share (*/ ,EPSPXq AS EPSPX /*) 
-                     * Common shares to calculate EPS (*/ ,CSHPRq AS CSHPRI /*)
-            CFO1 = Operating Activities / Net CF (*/ ,OANCFy AS OANCF /*) [Post 1987]
-            CFO1 =  Funds from Operations (*/ ,FOPTy AS FOPT /* ) [Pre 1987] 
-                    - Change in Current Assets(*/ ,ACTq AS ACT /*)
-                    - Change in Debt in Current Liabilities (*/ ,DLCq AS DLC /*)
-                    + Change in Current Liabilities (*/ ,LCTq AS LCT /*)
-                    + Change in Cash (*/ ,CHq AS CH /*)
-            TA1 = Net Income (*/ ,NIq AS NI /*) 
-                + Depreciation (*/ ,DPq AS DP /*)
-                - Cash Flow from Operations ( CFO1)
-            EARN2 = Operating income after depreciation (*/ ,OIADPq AS OAIDP/*)
-            TA2 = Change in current assets (ACTq)
-                    - Change in cash/equivalents (*/ ,CHEq AS CHE /*)
-                    - Change in current liabilities (LCTq)
-                    + Change in debt inculuded in current liabilties (DLCq)
-                    + Change in income tax payable (*/ ,TXPq AS TXP /*)
-                    - Depreciation and amortization expense (DPq)*/
-        FROM comp.fundq AS f
-        LEFT JOIN comp.NAMES as nam 
-            ON f.gvkey = nam.gvkey
-        WHERE INDFMT= 'INDL' 
-        AND DATAFMT='STD' 
-        AND POPSRC='D'
-        AND CONSOL='C'
-        /*AND DATADATE >= '01JAN1960'd
-        AND DATADATE <= '01JAN2012'd
-        AND nam.sic NOT LIKE "6%"*/
-        ORDER BY gvkey, date;
-
-        CREATE TABLE funda AS
+        CREATE TABLE funda_1 AS
         SELECT f.gvkey, f.datadate AS date
             ,f.fyear, f.fyr AS FYE_MONTH
             ,nam.sic, nam.naics
-            ,AT, LT /*
+            ,AT, LT
+            ,COALESCE(CEQ, CEQL) AS BVE /* Book Value of Equity */
+            ,DVP + DVC AS Dividends
+            ,DLC, DLTT, PSTK /*
             EARN1 = Earnings per share (*/ ,EPSPX /*) 
                      * Common shares to calculate EPS (*/ ,CSHPRI /*)
             CFO1 = Operating Activities / Net Cash Flow (*/ ,OANCF /*) [Post 1987]
@@ -122,26 +100,51 @@ RSUBMIT;
         AND nam.sic NOT LIKE "6%"*/
         ORDER BY gvkey, date;
         
+        /* Drop firms with one observation and no Book Value of Equity */
+        CREATE TABLE dropfirms1 AS
+        SELECT UNIQUE count(*) AS drop,gvkey
+        FROM funda_1
+        WHERE fyear NE .
+        GROUP BY gvkey,fyear
+        HAVING drop > 1;
+        
+        CREATE TABLE dropfirms2 AS
+        SELECT UNIQUE min(BVE) as drop, gvkey
+        FROM funda_1
+        GROUP BY gvkey
+        HAVING drop eq .;
+
+        CREATE TABLE funda_2 AS
+        SELECT *,count(*) AS lifespan 
+        FROM funda_1
+        WHERE fyear ne . 
+            AND gvkey NOT IN (SELECT gvkey FROM dropfirms1)
+            AND gvkey NOT IN (SELECT gvkey FROM dropfirms2)
+        GROUP BY gvkey
+        ORDER BY gvkey,fyear;
+
+        DELETE FROM funda_2
+        WHERE lifespan < 2;
+
+        DROP TABLE dropfirms1,dropfirms2;	
+    QUIT;
+    PROC SORT DATA=funda_2;BY gvkey fyear;RUN;
+    PROC DOWNLOAD
+        DATA= funda_2
+        OUT= _funda;
+    RUN;
+    
+    PROC SQL;
         CREATE TABLE crsp AS
         SELECT DISTINCT t1.gvkey, dsf.permno, dsf.date
             ,ABS(dsf.prc) AS price, dsf.ret, dsf.retx
             ,dsf.shrout
-        FROM (SELECT DISTINCT gvkey FROM
-                (SELECT DISTINCT gvkey FROM funda 
-                UNION SELECT DISTINCT gvkey FROM fundq)) AS t1
+        FROM (SELECT DISTINCT gvkey FROM funda_2) AS t1
         LEFT JOIN crsp.CCMXPF_LINKTABLE AS lnk 
             ON lnk.gvkey = t1.gvkey
         LEFT JOIN crsp.dsf AS dsf
             ON dsf.permno = lnk.lpermno;
     QUIT;
-    PROC DOWNLOAD
-        DATA= fundq
-        OUT= _fundq;
-    RUN;
-    PROC DOWNLOAD
-        DATA= funda
-        OUT= _funda;
-    RUN;
     PROC DOWNLOAD
         DATA= crsp
         OUT= _dsf;
@@ -149,51 +152,26 @@ RSUBMIT;
 ENDRSUBMIT;
 %WRDS("close");
 
-* Change this to fundq to get quarterly. Don't expect it'll work. ;
-%LET funda = _funda;
-
-PROC SORT DATA=&funda;BY gvkey fyear;RUN;
-
-PROC SQL;
-    CREATE TABLE dropfirms1 AS
-    SELECT UNIQUE count(*) AS drop,gvkey
-    FROM &funda
-    WHERE fyear NE .
-    GROUP BY gvkey,fyear
-    HAVING drop > 1;
-    
-    CREATE TABLE dropfirms2 AS
-    SELECT UNIQUE min(AT) as drop, gvkey
-    FROM &funda
-    GROUP BY gvkey
-    HAVING drop eq .;
-
-    CREATE TABLE fnda_1_initfunda AS
-    SELECT *,count(*) AS lifespan 
-    FROM &funda
-    WHERE fyear ne . 
-        AND gvkey NOT IN (SELECT gvkey FROM dropfirms1)
-        AND gvkey NOT IN (SELECT gvkey FROM dropfirms2)
-    GROUP BY gvkey
-    ORDER BY gvkey,fyear;
-
-    DELETE FROM fnda_1_initfunda
-    WHERE lifespan < 2;
-
-    DROP TABLE dropfirms1,dropfirms2;	
-QUIT;
-
 OPTIONS NONOTES;
-PROC EXPAND DATA=fnda_1_initfunda OUT=fnda_2_fundadiffs 
+PROC EXPAND DATA=_funda OUT=fnda_1_interpolate 
+        FROM=DAY METHOD=SPLINE;
+    BY gvkey;
+    ID fyear;
+    CONVERT DLC DLTT PSTK;
+    RUN;
+    
+PROC EXPAND DATA=fnda_1_interpolate OUT=fnda_2_fundadiffs 
         FROM=DAY METHOD=NONE;
     BY gvkey;
     ID fyear;
     CONVERT act=dact / TRANSFORMOUT=( DIF 1 );
     CONVERT dlc=ddlc / TRANSFORMOUT=( DIF 1 );
     CONVERT lct=dlct / TRANSFORMOUT=( DIF 1 );
-    CONVERT ch=dch / TRANSFORMOUT=( DIF 1 );
+    CONVERT ch =dch  / TRANSFORMOUT=( DIF 1 );
     CONVERT che=dche / TRANSFORMOUT=( DIF 1 );
     CONVERT txp=dtxp / TRANSFORMOUT=( DIF 1 );
+    CONVERT bve=dbve / TRANSFORMOUT=( DIF 1 );
+    CONVERT date=ddate / TRANSFORMOUT=( LAG 1 );
     RUN;
     OPTIONS NOTES;
 
@@ -209,7 +187,7 @@ DATA fnda_3_vars; SET fnda_2_fundadiffs;
     CFO1_coalesced = COALESCE(CFO1,CFO1_Pre1989_coalesced);
     TA1 = NI+DP-CFO1;
     TA1_coalesced = NI+DP-CFO1_coalesced;
-
+    
     EARN2 = OIADP;
     TA2 = dACT - dCHE - dLCT + dDLC + dTXP - DP;
     CFO2 = EARN2 - TA2;
@@ -234,8 +212,6 @@ PROC SQL;
     HAVING date = MAX(date);
 QUIT;
 
-%MEND DEBUG_already_run;
-
 PROC SQL;
     CREATE TABLE dropfirms AS
     SELECT DISTINCT gvkey,permno
@@ -251,6 +227,7 @@ PROC SQL;
     DROP TABLE dropfirms;
 QUIT;
 
+/*
 PROC SQL;
     CREATE TABLE joint_1_joindata AS
     SELECT fnda.*, dsf.*, dsf.date AS last_stock_date
@@ -259,3 +236,24 @@ PROC SQL;
         ON dsf.gvkey = fnda.gvkey
         AND dsf.year = fnda.myear;
 QUIT;
+
+
+Vuolteenaho Recreation:
+
+
+Book Value of equity:
+    1) CEQ: Item 60, Common/Ordinary Equity - Total
+    2) CEQL: Item 235, Common Equity / Liquidation Value
+Net Income (Vuolteenaho)
+    1) NI: Item 172, Net Income (Loss)
+    2) Change in BVE + Dividends (D.BVE + DVP/DVC) (Preferred/Common)
+Book Debt:
+    1) Current Liabilities(DLC/#34) + Total Long Term Debt(DLTT/#9) + Preferred Stock (PSTK/#130)
+    
+PROC SQL;
+    CREATE TABLE vout_1_vars AS
+    SELECT 
+    FROM fnda_2_fundadiffs;
+QUIT;
+*/
+
