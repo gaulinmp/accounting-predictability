@@ -14,6 +14,8 @@ QUIT;
 
 %INCLUDE "&pwd/preamble.sas";
 
+%LET divide_month = 8;
+
 %MACRO DEBUG_already_run();
 /*
 Variables taken from:
@@ -211,7 +213,9 @@ DATA fnda_3_vars; SET fnda_2_fundadiffs;
     EARN2 = OIADP;
     TA2 = dACT - dCHE - dLCT + dDLC + dTXP - DP;
     CFO2 = EARN2 - TA2;
-    KEEP gvkey fyear date fye_month sic naics at lt
+    
+    myear = YEAR(date) + (SIGN(MONTH(date)-&divide_month+.1)-1)/2;
+    KEEP gvkey fyear date fye_month sic naics lifespan myear at lt
         earn1 cfo1 ta1 earn2 ta2 cfo2;
     RUN;
     PROC SORT DATA=fnda_3_vars;BY gvkey fyear;RUN;
@@ -245,4 +249,13 @@ PROC SQL;
     WHERE gvkey NOT IN (SELECT DISTINCT gvkey FROM dropfirms);
 
     DROP TABLE dropfirms;
+QUIT;
+
+PROC SQL;
+    CREATE TABLE joint_1_joindata AS
+    SELECT fnda.*, dsf.*, dsf.date AS last_stock_date
+    FROM fnda_3_vars AS fnda
+    LEFT JOIN dsf_2_goodfirms AS dsf
+        ON dsf.gvkey = fnda.gvkey
+        AND dsf.year = fnda.myear;
 QUIT;
