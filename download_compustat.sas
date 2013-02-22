@@ -75,7 +75,7 @@ RSUBMIT;
             CFO1 = Operating Activities / Net Cash Flow (*/ ,OANCF /*) [Post 1987]
             CFO1 =  Funds from Operations (*/ ,FOPT /* ) [Pre 1987] 
                     - Change in Current Assets(*/ ,ACT /*)
-                    - Change in Debt in Current Liabilities (*/ ,DLC /*)
+                    - Change in Debt in Current Liabilities ( DLC )
                     + Change in Current Liabilities (*/ ,LCT /*)
                     + Change in Cash (*/ ,CH /*)
             TA1 = Net Income (*/ ,NI /*) 
@@ -133,7 +133,7 @@ RSUBMIT;
         DATA= funda_2
         OUT= _funda;
     RUN;
-    
+	/*
     PROC SQL;
         CREATE TABLE crsp AS
         SELECT DISTINCT t1.gvkey, dsf.permno, dsf.date
@@ -148,7 +148,7 @@ RSUBMIT;
     PROC DOWNLOAD
         DATA= crsp
         OUT= _dsf;
-    RUN;
+    RUN; */
 ENDRSUBMIT;
 %WRDS("close");
 
@@ -178,7 +178,7 @@ PROC EXPAND DATA=fnda_1_interpolate OUT=fnda_2_fundadiffs
 DATA fnda_3_vars; SET fnda_2_fundadiffs;
     EARN1 = EPSPX * CSHPRI;
     CFO1_Pre1989 = FOPT-dACT-dDLC+dLCT+dCH;
-    CFO1_Pre1989_coalesced = COALESCE(FOPT,0)
+    CFO1_Pre1989_coalesced = FOPT
             -COALESCE(dACT,0)
             -COALESCE(dDLC,0)
             +COALESCE(dLCT,0)
@@ -198,36 +198,85 @@ DATA fnda_3_vars; SET fnda_2_fundadiffs;
     RUN;
     PROC SORT DATA=fnda_3_vars;BY gvkey fyear;RUN;
 
-PROC SORT DATA=_dsf;BY permno date;RUN;
+PROC SORT DATA=_dsf;BY gvkey permno date;RUN;
+
+/* Use FUNDA to create range for yearly returns based on fyend 
+ fyend_num_day_lag is the number of days after fyend to end the yearly return */
+%LET fyend_num_day_lag = 120;
+PROC EXPAND DATA=fnda_3_vars OUT=tmp_1(KEEP= gvkey fyear ldate date )
+        FROM=DAY METHOD=NONE;
+    BY gvkey;
+    ID fyear;
+    CONVERT date=ldate / TRANSFORMOUT=( LAG 1 );
+    RUN;
+DATA tmp_1;SET tmp_1;
+    BY gvkey;
+    deleteme = 0;
+    datedif = date - ldate;
+    /* The first lag_date is always blank. If it's not the first, there's a filing gap. Drop it. */
+    IF NOT FIRST.gvkey THEN DO; 
+        IF ldate eq . THEN deleteme = 1;
+    END;
+    /* return window end date is 'fyend_num_day_lag' days after fyend */
+    ret_end = INTNX('day',date,&fyend_num_day_lag);
+    FORMAT ret_end date9.;
+    /* return window beginning date is 365 days before the end date */
+    ret_beg = INTNX('day',ret_end,-365);
+    FORMAT ret_beg date9.;
+    /* If the beginning date is before last years fyend, drop it */
+    IF ret_beg < ldate THEN  deleteme = 1;
+    RUN;
 
 PROC SQL;
-    CREATE TABLE dsf_1_logrets AS
-    SELECT DISTINCT gvkey,permno,YEAR(date) as year
+    /* Drop dates from above */
+    CREATE TABLE tmp_2 AS
+    SELECT * FROM tmp_1
+    GROUP BY gvkey
+    HAVING max(deleteme) = 0
+    ORDER BY gvkey,fyear;
+    
+    /* Use return beginning and end range to join fyear to DSF */
+    CREATE TABLE dsf_1_fyear AS
+    SELECT d.*,f.fyear
+    FROM _dsf AS d
+    LEFT JOIN tmp_2 AS f
+        ON d.gvkey = f.gvkey
+        AND d.date > f.ret_beg 
+        AND d.date le f.ret_end;
+    
+    DROP TABLE tmp_1, tmp_2;
+QUIT;
+
+PROC SQL;
+    CREATE TABLE dsf_2_logrets AS
+    SELECT DISTINCT gvkey,permno,fyear
         ,EXP(SUM(LOG(1+RET)))-1 AS ret
         ,EXP(SUM(LOG(1+RET)))-1 AS retx
         ,price,shrout, date, COUNT(*) AS numdays
-    FROM _dsf
-    WHERE date ne . AND ret > -9999
-    GROUP BY permno,year
+    FROM dsf_1_fyear
+    WHERE date ne . 
+        AND ret > -9999
+        AND fyear ne .
+    GROUP BY permno,fyear
     HAVING date = MAX(date);
 QUIT;
 
 PROC SQL;
     CREATE TABLE dropfirms AS
     SELECT DISTINCT gvkey,permno
-    FROM (SELECT DISTINCT gvkey,permno FROM dsf_1_logrets)
+    FROM (SELECT DISTINCT gvkey,permno FROM dsf_2_logrets)
     GROUP BY gvkey
     HAVING count(*)>1;
 
-    CREATE TABLE dsf_2_goodfirms AS
+    CREATE TABLE dsf_3_goodfirms AS
     SELECT DISTINCT *
-    FROM dsf_1_logrets
+    FROM dsf_2_logrets
     WHERE gvkey NOT IN (SELECT DISTINCT gvkey FROM dropfirms);
 
     DROP TABLE dropfirms;
 QUIT;
 
-/*
+
 PROC SQL;
     CREATE TABLE joint_1_joindata AS
     SELECT fnda.*, dsf.*, dsf.date AS last_stock_date
@@ -237,7 +286,7 @@ PROC SQL;
         AND dsf.year = fnda.myear;
 QUIT;
 
-
+/*
 Vuolteenaho Recreation:
 
 
@@ -249,11 +298,14 @@ Net Income (Vuolteenaho)
     2) Change in BVE + Dividends (D.BVE + DVP/DVC) (Preferred/Common)
 Book Debt:
     1) Current Liabilities(DLC/#34) + Total Long Term Debt(DLTT/#9) + Preferred Stock (PSTK/#130)
-    
+*/
 PROC SQL;
     CREATE TABLE vout_1_vars AS
-    SELECT 
+    SELECT gvkey,fyear,date
+        ,COALESCE(CEQ,CEQL) AS BVE
+        ,COALESCE(NI,dBVE + DVP + DVC) AS NI
+        ,COALESCE(DLC,0) + COALESCE(DLTT,0) + COALESCE(PSTK,0) AS BVD
     FROM fnda_2_fundadiffs;
 QUIT;
-*/
+
 
