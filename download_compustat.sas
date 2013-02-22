@@ -109,7 +109,7 @@ RSUBMIT;
         HAVING drop > 1;
         
         CREATE TABLE dropfirms2 AS
-        SELECT UNIQUE min(BVE) as drop, gvkey
+        SELECT UNIQUE SUM(BVE) as drop, gvkey
         FROM funda_1
         GROUP BY gvkey
         HAVING drop eq .;
@@ -133,22 +133,22 @@ RSUBMIT;
         DATA= funda_2
         OUT= _funda;
     RUN;
-	/*
+	/* */
     PROC SQL;
         CREATE TABLE crsp AS
-        SELECT DISTINCT t1.gvkey, dsf.permno, dsf.date
-            ,ABS(dsf.prc) AS price, dsf.ret, dsf.retx
-            ,dsf.shrout
-        FROM (SELECT DISTINCT gvkey FROM funda_2) AS t1
+        SELECT DISTINCT t1.gvkey, msf.permno, msf.date
+            ,ABS(msf.prc) AS price, msf.ret, msf.retx
+            ,msf.shrout
+        FROM (SELECT DISTINCT gvkey FROM funda_1) AS t1
         LEFT JOIN crsp.CCMXPF_LINKTABLE AS lnk 
             ON lnk.gvkey = t1.gvkey
-        LEFT JOIN crsp.dsf AS dsf
-            ON dsf.permno = lnk.lpermno;
+        LEFT JOIN crsp.msf AS msf
+            ON msf.permno = lnk.lpermno;
     QUIT;
     PROC DOWNLOAD
         DATA= crsp
-        OUT= _dsf;
-    RUN; */
+        OUT= _msf;
+    RUN; 
 ENDRSUBMIT;
 %WRDS("close");
 
@@ -198,11 +198,11 @@ DATA fnda_3_vars; SET fnda_2_fundadiffs;
     RUN;
     PROC SORT DATA=fnda_3_vars;BY gvkey fyear;RUN;
 
-PROC SORT DATA=_dsf;BY gvkey permno date;RUN;
+PROC SORT DATA=_msf;BY gvkey permno date;RUN;
 
 /* Use FUNDA to create range for yearly returns based on fyend 
  fyend_num_day_lag is the number of days after fyend to end the yearly return */
-%LET fyend_num_day_lag = 120;
+%LET fyend_num_month_lag = 4;
 PROC EXPAND DATA=fnda_3_vars OUT=tmp_1(KEEP= gvkey fyear ldate date )
         FROM=DAY METHOD=NONE;
     BY gvkey;
@@ -217,11 +217,11 @@ DATA tmp_1;SET tmp_1;
     IF NOT FIRST.gvkey THEN DO; 
         IF ldate eq . THEN deleteme = 1;
     END;
-    /* return window end date is 'fyend_num_day_lag' days after fyend */
-    ret_end = INTNX('day',date,&fyend_num_day_lag);
+    /* return window end date is 'fyend_num_month_lag' months after fyend */
+    ret_end = INTNX('month',date,&fyend_num_month_lag);
     FORMAT ret_end date9.;
-    /* return window beginning date is 365 days before the end date */
-    ret_beg = INTNX('day',ret_end,-365);
+    /* return window beginning date is 12 months before the end date */
+    ret_beg = INTNX('month',ret_end,-11);
     FORMAT ret_beg date9.;
     /* If the beginning date is before last years fyend, drop it */
     IF ret_beg < ldate THEN  deleteme = 1;
@@ -236,24 +236,24 @@ PROC SQL;
     ORDER BY gvkey,fyear;
     
     /* Use return beginning and end range to join fyear to DSF */
-    CREATE TABLE dsf_1_fyear AS
-    SELECT d.*,f.fyear
-    FROM _dsf AS d
+    CREATE TABLE msf_1_fyear AS
+    SELECT m.*,f.fyear
+    FROM _msf AS m
     LEFT JOIN tmp_2 AS f
-        ON d.gvkey = f.gvkey
-        AND d.date > f.ret_beg 
-        AND d.date le f.ret_end;
+        ON m.gvkey = f.gvkey
+        AND m.date ge f.ret_beg 
+        AND m.date le f.ret_end;
     
     DROP TABLE tmp_1, tmp_2;
 QUIT;
 
 PROC SQL;
-    CREATE TABLE dsf_2_logrets AS
+    CREATE TABLE msf_2_logrets AS
     SELECT DISTINCT gvkey,permno,fyear
         ,EXP(SUM(LOG(1+RET)))-1 AS ret
         ,EXP(SUM(LOG(1+RET)))-1 AS retx
-        ,price,shrout, date, COUNT(*) AS numdays
-    FROM dsf_1_fyear
+        ,price,shrout, date, COUNT(*) AS nummonths
+    FROM msf_1_fyear
     WHERE date ne . 
         AND ret > -9999
         AND fyear ne .
@@ -264,26 +264,16 @@ QUIT;
 PROC SQL;
     CREATE TABLE dropfirms AS
     SELECT DISTINCT gvkey,permno
-    FROM (SELECT DISTINCT gvkey,permno FROM dsf_2_logrets)
+    FROM (SELECT DISTINCT gvkey,permno FROM msf_2_logrets)
     GROUP BY gvkey
     HAVING count(*)>1;
 
-    CREATE TABLE dsf_3_goodfirms AS
+    CREATE TABLE msf_3_goodfirms AS
     SELECT DISTINCT *
-    FROM dsf_2_logrets
+    FROM msf_2_logrets
     WHERE gvkey NOT IN (SELECT DISTINCT gvkey FROM dropfirms);
 
     DROP TABLE dropfirms;
-QUIT;
-
-
-PROC SQL;
-    CREATE TABLE joint_1_joindata AS
-    SELECT fnda.*, dsf.*, dsf.date AS last_stock_date
-    FROM fnda_3_vars AS fnda
-    LEFT JOIN dsf_2_goodfirms AS dsf
-        ON dsf.gvkey = fnda.gvkey
-        AND dsf.year = fnda.myear;
 QUIT;
 
 /*
