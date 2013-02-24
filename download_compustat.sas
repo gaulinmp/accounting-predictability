@@ -17,7 +17,6 @@ QUIT;
 %LET divide_month = 8;
 
 %MACRO DEBUG_already_run();
-%MEND DEBUG_already_run;
 /*
 Variables taken from:
 
@@ -133,24 +132,124 @@ RSUBMIT;
         DATA= funda_2
         OUT= _funda;
     RUN;
-	/* */
     PROC SQL;
-        CREATE TABLE crsp AS
-        SELECT DISTINCT t1.gvkey, msf.permno, msf.date
-            ,ABS(msf.prc) AS price, msf.ret, msf.retx
-            ,msf.shrout
-        FROM (SELECT DISTINCT gvkey FROM funda_1) AS t1
-        LEFT JOIN crsp.CCMXPF_LINKTABLE AS lnk 
-            ON lnk.gvkey = t1.gvkey
-        LEFT JOIN crsp.msf AS msf
-            ON msf.permno = lnk.lpermno;
+        CREATE TABLE m1 AS
+        SELECT permno,date
+            ,COALESCE(ABS(prc),ABS(ALTPRC)) AS prc
+            ,vol,ret,retx,shrout
+            ,ABS(prc)*shrout/1000 AS MVE
+            ,CASE WHEN vol > 0 THEN 1 ELSE 0 END AS traded
+        FROM crsp.msf
+        ORDER BY permno, date;
     QUIT;
+
+    PROC EXPAND DATA=m1 OUT=m2 FROM=month METHOD=NONE;
+        BY permno;
+        ID date;
+        CONVERT traded = traded_prev_year
+             / TRANSFORMOUT=( MOVSUM 12 );
+        CONVERT traded = traded_prev_month
+             / TRANSFORMOUT=( LAG 1 );
+        RUN;
+        
+    PROC EXPAND DATA=m2 OUT=m2 FROM=month METHOD=NONE;
+        BY permno;
+        ID date;
+        CONVERT mve = mve_prev_1_year / TRANSFORMOUT=( LAG 12 );
+        CONVERT mve = mve_prev_2_year / TRANSFORMOUT=( LAG 24 );
+        CONVERT mve = mve_prev_3_year / TRANSFORMOUT=( LAG 36 );
+        CONVERT traded_prev_year = traded_prev_2_year
+             / TRANSFORMOUT=( LAG 12 );
+        CONVERT traded_prev_year = traded_prev_3_year
+             / TRANSFORMOUT=( LAG 24 );
+        CONVERT traded_prev_year = traded_prev_4_year
+             / TRANSFORMOUT=( LAG 36 );
+        CONVERT traded_prev_year = traded_prev_5_year
+             / TRANSFORMOUT=( LAG 48 );
+        RUN;
+    
+    DATA m2;SET m2;
+        traded_last_5_years = SIGN(traded_prev_year*
+            traded_prev_2_year*traded_prev_3_year*
+            traded_prev_4_year*traded_prev_5_year);
+        past_3_years_mve = SIGN(mve_prev_1_year*
+            mve_prev_2_year*mve_prev_3_year);
+        mve_gt_10M = FLOOR((SIGN(mve-10)+1)/2);
+        
+        IF traded_last_5_years eq . THEN traded_last_5_years = 0;
+        IF traded_prev_month eq . THEN traded_prev_month = 0;
+        IF past_3_years_mve eq . THEN past_3_years_mve = 0;
+        IF mve_gt_10M eq . THEN mve_gt_10M = 0;
+        vs_eq = traded_last_5_years * traded_prev_month
+                * past_3_years_mve * mve_gt_10M;
+        DROP traded traded_prev_year
+            traded_prev_2_year traded_prev_3_year
+            traded_prev_4_year traded_prev_5_year
+            mve_prev_1_year mve_prev_2_year mve_prev_3_year;
+        RUN;
+    
     PROC DOWNLOAD
-        DATA= crsp
+        DATA= m2
         OUT= _msf;
+    RUN; 
+    PROC SQL;
+        CREATE TABLE crsp1 AS
+        SELECT DISTINCT lnk.gvkey, msf.*
+        ,CASE lnk.linktype 
+                WHEN 'LC' THEN 1
+                WHEN 'LU' THEN 2
+                WHEN 'LX' THEN 3
+                WHEN 'LS' THEN 4
+                WHEN 'LN' THEN 5
+                WHEN 'LD' THEN 6
+                WHEN 'LO' THEN 7 
+                WHEN 'LF' THEN 8 
+                ELSE 99 
+            END AS linknum
+        FROM m2 AS msf
+        LEFT JOIN (SELECT * FROM crsp.CCMXPF_LINKTABLE 
+                WHERE linktype in ("LU", "LC", "LD", "LF", "LN", "LO", "LS", "LX"))AS lnk 
+            ON msf.permno = lnk.lpermno
+            AND (linkdt <= msf.date OR linkdt = .B) 
+            AND (msf.date <= linkenddt OR linkenddt = .E)
+        ORDER BY gvkey,permno,date;
+        
+        CREATE TABLE dropfirms1 AS
+        SELECT DISTINCT gvkey,1 AS dropfirm
+        FROM (SELECT DISTINCT gvkey,permno FROM crsp1 WHERE gvkey ne "")
+        GROUP BY gvkey
+        HAVING count(*)>1
+        ORDER BY gvkey;
+        
+        CREATE TABLE dropfirms2 AS
+        SELECT DISTINCT gvkey,1 AS dropfirm
+        FROM (SELECT DISTINCT gvkey,permno FROM crsp1 WHERE gvkey ne "")
+        GROUP BY permno
+        HAVING count(*)>1
+        ORDER BY gvkey;
+        
+        CREATE TABLE crsp2 AS
+        SELECT c.*
+            ,COALESCE(d1.dropfirm,d2.dropfirm,0) AS dropfirm
+        FROM crsp1 AS c
+        LEFT JOIN dropfirms1 AS d1
+            ON c.gvkey = d1.gvkey
+        LEFT JOIN dropfirms2 AS d2
+            ON c.gvkey = d2.gvkey
+        ORDER BY gvkey,permno,date;
+    QUIT;
+    
+    PROC DOWNLOAD
+        DATA= crsp2
+        OUT= _msf_linked;
+    RUN; 
+    PROC DOWNLOAD
+        DATA= crsp.CCMXPF_LINKTABLE
+        OUT= _CCMXPF_LINKTABLE;
     RUN; 
 ENDRSUBMIT;
 %WRDS("close");
+%MEND DEBUG_already_run;
 
 OPTIONS NONOTES;
 PROC EXPAND DATA=_funda OUT=fnda_1_interpolate 
@@ -159,7 +258,7 @@ PROC EXPAND DATA=_funda OUT=fnda_1_interpolate
     ID fyear;
     CONVERT DLC DLTT PSTK;
     RUN;
-    
+
 PROC EXPAND DATA=fnda_1_interpolate OUT=fnda_2_fundadiffs 
         FROM=DAY METHOD=NONE;
     BY gvkey;
@@ -171,9 +270,30 @@ PROC EXPAND DATA=fnda_1_interpolate OUT=fnda_2_fundadiffs
     CONVERT che=dche / TRANSFORMOUT=( DIF 1 );
     CONVERT txp=dtxp / TRANSFORMOUT=( DIF 1 );
     CONVERT bve=dbve / TRANSFORMOUT=( DIF 1 );
-    CONVERT date=ddate / TRANSFORMOUT=( LAG 1 );
+    CONVERT date=ldate / TRANSFORMOUT=( LAG 1 );
+    CONVERT bve =l1bve / TRANSFORMOUT=( LAG 1 );
+    CONVERT bve =l2bve / TRANSFORMOUT=( LAG 2 );
+    CONVERT bve =l3bve / TRANSFORMOUT=( LAG 3 );
+    CONVERT ni  =lni   / TRANSFORMOUT=( LAG 1 );
+    CONVERT ni  =l2ni  / TRANSFORMOUT=( LAG 2 );
+    CONVERT dltt=ldltt / TRANSFORMOUT=( LAG 1 );
+    CONVERT dltt=l2dltt/ TRANSFORMOUT=( LAG 2 );
     RUN;
     OPTIONS NOTES;
+
+DATA fnda_2_fundadiffs;SET fnda_2_fundadiffs;
+    dec_fye = 0; 
+        IF MONTH(date) eq 12 
+            THEN dec_fye = 1;
+    past_3_years_bve = 0; 
+        IF l1bve*l2bve*l3bve > 0 
+            THEN past_3_years_bve = 1;
+    past_2_years_nidltt = 0; 
+        IF lni*l2ni ne . AND ldltt*l2dltt ne .
+            THEN past_2_years_nidltt = 1;
+    vs_acc = dec_fye * past_3_years_bve * past_2_years_nidltt;
+    DROP l1bve l2bve l3bve lni l2ni ldltt l2dltt;
+    RUN;
 
 DATA fnda_3_vars; SET fnda_2_fundadiffs;
     EARN1 = EPSPX * CSHPRI;
@@ -192,24 +312,26 @@ DATA fnda_3_vars; SET fnda_2_fundadiffs;
     TA2 = dACT - dCHE - dLCT + dDLC + dTXP - DP;
     CFO2 = EARN2 - TA2;
     
-    myear = YEAR(date) + (SIGN(MONTH(date)-&divide_month+.1)-1)/2;
-    KEEP gvkey fyear date fye_month sic naics lifespan myear at lt
-        earn1 cfo1 ta1 earn2 ta2 cfo2;
+    ROE = .; IF (BVE-dBVE) > 0 THEN
+        ROE = COALESCE(NI,dBVE + Dividends)/(BVE-dBVE);
+    KEEP gvkey fyear date fye_month sic naics lifespan at lt
+        earn1 cfo1 ta1 earn2 ta2 cfo2 bve roe vs_acc;
     RUN;
     PROC SORT DATA=fnda_3_vars;BY gvkey fyear;RUN;
 
-PROC SORT DATA=_msf;BY gvkey permno date;RUN;
+*PROC SORT DATA=_msf_linked;BY permno date;RUN;
 
 /* Use FUNDA to create range for yearly returns based on fyend 
  fyend_num_day_lag is the number of days after fyend to end the yearly return */
 %LET fyend_num_month_lag = 4;
-PROC EXPAND DATA=fnda_3_vars OUT=tmp_1(KEEP= gvkey fyear ldate date )
-        FROM=DAY METHOD=NONE;
-    BY gvkey;
-    ID fyear;
-    CONVERT date=ldate / TRANSFORMOUT=( LAG 1 );
+%LET msf = _msf_gvkey;
+DATA &msf;SET _msf_linked;
+    IF gvkey ne .;
+    IF dropfirm eq 0;
+    DROP dropfirm;
     RUN;
-DATA tmp_1;SET tmp_1;
+    
+DATA tmp_1;SET fnda_2_fundadiffs(KEEP= gvkey fyear ldate date );
     BY gvkey;
     deleteme = 0;
     datedif = date - ldate;
@@ -238,42 +360,26 @@ PROC SQL;
     /* Use return beginning and end range to join fyear to DSF */
     CREATE TABLE msf_1_fyear AS
     SELECT m.*,f.fyear
-    FROM _msf AS m
+    FROM (SELECT gvkey, permno, date, prc,shrout,ret,mve,vol,vs_eq FROM &msf) AS m
     LEFT JOIN tmp_2 AS f
         ON m.gvkey = f.gvkey
         AND m.date ge f.ret_beg 
         AND m.date le f.ret_end;
     
-    DROP TABLE tmp_1, tmp_2;
+    *DROP TABLE tmp_1, tmp_2;
 QUIT;
 
 PROC SQL;
     CREATE TABLE msf_2_logrets AS
     SELECT DISTINCT gvkey,permno,fyear
         ,EXP(SUM(LOG(1+RET)))-1 AS ret
-        ,EXP(SUM(LOG(1+RET)))-1 AS retx
-        ,price,shrout, date, COUNT(*) AS nummonths
+        ,prc,shrout,vol,date,mve,vs_eq, COUNT(*) AS nummonths
     FROM msf_1_fyear
     WHERE date ne . 
         AND ret > -9999
         AND fyear ne .
     GROUP BY permno,fyear
     HAVING date = MAX(date);
-QUIT;
-
-PROC SQL;
-    CREATE TABLE dropfirms AS
-    SELECT DISTINCT gvkey,permno
-    FROM (SELECT DISTINCT gvkey,permno FROM msf_2_logrets)
-    GROUP BY gvkey
-    HAVING count(*)>1;
-
-    CREATE TABLE msf_3_goodfirms AS
-    SELECT DISTINCT *
-    FROM msf_2_logrets
-    WHERE gvkey NOT IN (SELECT DISTINCT gvkey FROM dropfirms);
-
-    DROP TABLE dropfirms;
 QUIT;
 
 /*
@@ -291,11 +397,37 @@ Book Debt:
 */
 PROC SQL;
     CREATE TABLE vout_1_vars AS
-    SELECT gvkey,fyear,date
-        ,COALESCE(CEQ,CEQL) AS BVE
-        ,COALESCE(NI,dBVE + DVP + DVC) AS NI
-        ,COALESCE(DLC,0) + COALESCE(DLTT,0) + COALESCE(PSTK,0) AS BVD
-    FROM fnda_2_fundadiffs;
+    SELECT UNIQUE f.gvkey,f.fyear,f.date,m.permno
+        ,f.*
+        ,log(1+roe) AS ROE
+		,log(mve/bve ) AS MtB
+		,log(1+ret) AS ret
+        ,mve
+        ,CASE 
+                WHEN mve/bve > 1/100 AND mve/bve  < 100 THEN vs_acc*vs_eq
+                ELSE 0
+            END AS in_vol_sample
+    FROM fnda_3_vars AS f
+	LEFT JOIN msf_2_logrets AS m
+		ON f.gvkey = m.gvkey
+		AND f.fyear = m.fyear;
+/*
+	CREATE TABLE vout_2_nonempty AS
+	SELECT * FROM vout_1_vars
+	WHERE roe NE . AND mtb NE . AND ret NE .;
+
+	CREATE TABLE dropfirms AS
+    SELECT DISTINCT permno,gvkey
+    FROM (SELECT DISTINCT permno,gvkey FROM vout_2_nonempty)
+    GROUP BY permno
+    HAVING count(*)>1;
+
+	CREATE TABLE vout_3_cleaned AS
+	SELECT * FROM vout_2_nonempty
+	WHERE permno NOT IN (SELECT DISTINCT permno FROM dropfirms);
+
+	DROP TABLE dropfirms; */
 QUIT;
 
+%EXPORT_STATA(db_in=vout_1_vars,filename="&data_dir/01_vuolteenaho.dta");
 
