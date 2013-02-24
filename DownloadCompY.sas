@@ -65,10 +65,10 @@ rsubmit;
 
 libname out '/sastemp4'; 
 
-proc download data=crsp.CCMXPF_LINKTABLE (where=(LinkTYPE in ("LU", "LC", "LD", "LF", "LN", "LO", "LS", "LX"))) out=y.CCMXPF_LINKTABLE;
+proc download data=crsp.CCMXPF_LINKTABLE (where=(LinkTYPE in ("LU", "LC", "LD", "LF", "LN", "LO", "LS", "LX"))) out=_CCMXPF_LINKTABLE;
 run;
 
-proc download data=crsp.msenames out=y.msenames;
+proc download data=crsp.msenames out=_msenames;
 run;
 
 endrsubmit;
@@ -87,25 +87,33 @@ Also I want to identify linking codes so I can address an issue for duplicates t
 having more than one linking code for the same period of time.  Furthermore, we need the shareclass to deal with Dual Class shares.
 I change blank share classes to ZZ so when I order them, class A comes before blank.  If there is only one type
 of share it won't matter*/
-proc sql;
-	create table CCM1 as
-	select lpermno as permno, a.*,
-	Case b.LINKTYPE when 'LC' then 1
-	when 'LU' then 2
-	when 'LX' then 3
-	when 'LS' then 4
-	when 'LN' then 5
-	when 'LD' then 6
-	when 'LO' then 7 
-	when 'LF' then 8 else 99 end as lnum,
-	case when d.SHRCLS is null then 'ZZ' else d.SHRCLS end as SHRCLS
-	from &DSName as a inner join main.CCMXPF_LINKTABLE as b
-	ON a.GVKEY = b.GVKEY
-  	and (LINKDT <= a.DATADATE or LINKDT = .B) 
-  	and (a.DATADATE <= LINKENDDT or LINKENDDT = .E)
-	left outer join main.msenames as d on b.lpermno = d.permno
-	and a.Datadate between d.namedt and d.nameendt;
-quit;
+PROC SQL;
+	CREATE TABLE CCM1 AS
+	SELECT lpermno AS permno, a.*,
+        CASE b.LINKTYPE 
+            WHEN 'LC' THEN 1
+            WHEN 'LU' THEN 2
+            WHEN 'LX' THEN 3
+            WHEN 'LS' THEN 4
+            WHEN 'LN' THEN 5
+            WHEN 'LD' THEN 6
+            WHEN 'LO' THEN 7 
+            WHEN 'LF' THEN 8 
+            ELSE 99 
+        END AS lnum
+        ,CASE 
+            WHEN d.SHRCLS IS NULL THEN 'ZZ' 
+            ELSE d.SHRCLS 
+        END AS SHRCLS
+	FROM &DSName AS a 
+    INNER JOIN _CCMXPF_LINKTABLE AS b
+        ON a.GVKEY = b.GVKEY
+        AND (LINKDT <= a.DATADATE OR LINKDT = .B) 
+        AND (a.DATADATE <= LINKENDDT OR LINKENDDT = .E)
+    LEFT OUTER JOIN _msenames AS d 
+        on b.lpermno = d.permno
+        AND a.datadate BETWEEN d.namedt AND d.nameendt;
+QUIT;
 
 
 /*DUPLICATE HANDLING*/
