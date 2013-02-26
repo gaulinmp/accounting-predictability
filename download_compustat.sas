@@ -392,30 +392,32 @@ PROC SQL;
     SELECT UNIQUE f.gvkey,f.fyear,f.date,m.permno
         ,f.sic,bve,mve,at
         ,log(1+roe) AS ROE
-		,log(mve/bve) AS MtB
-		,log(1+ret) AS ret
-        ,earn1 AS earn, cfo1 AS cfo, ta1 AS ta
+        ,log(mve/bve) AS MtB
+        ,log(1+ret) AS ret
+        ,earn AS earn, cfo1 AS cfo, ta1 AS ta
         ,ranuni(bve*1000) AS randomnum
         ,LENGTH(firmname) AS namelen
-        ,CASE 
+        ,CASE
                 WHEN mve/bve > 1/100 AND mve/bve  < 100 THEN vs_acc*vs_eq
                 ELSE 0
             END AS in_vol_sample
     FROM fnda_3_vars AS f
-	LEFT JOIN msf_2_logrets AS m
-		ON f.gvkey = m.gvkey
-		AND f.fyear = m.fyear;
+    LEFT JOIN msf_2_logrets AS m
+        ON f.gvkey = m.gvkey
+        AND f.fyear = m.fyear;
 
-	CREATE TABLE vout_2_nonempty AS
-	SELECT * FROM vout_1_vars
-	WHERE roe NE . AND mtb NE . AND ret NE .
+    CREATE TABLE vout_2_nonempty AS
+    SELECT * FROM vout_1_vars
+    WHERE roe NE . AND mtb NE . AND ret NE .
         AND at ne . AND cfo ne . AND ta ne .;
     
 QUIT;
-%EXPORT_STATA(db_in=vout_1_vars(WHERE=(in_vol_sample=1)),filename="&data_dir/01_vuolteenaho.dta");
+%EXPORT_STATA(db_in=vout_1_vars(WHERE=(in_vol_sample=1)), filename = "&data_dir/01_vuolteenaho.dta");
 %EXPORT_STATA(db_in=vout_2_nonempty,filename="&data_dir/02_accdata.dta");
 
 PROC UNIVARIATE DATA=vout_1_vars(WHERE=(in_vol_sample=1));
+    RUN;
+PROC UNIVARIATE DATA=vout_2_nonempty(WHERE=(in_vol_sample=1));
     RUN;
 
 
