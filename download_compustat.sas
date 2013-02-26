@@ -67,7 +67,7 @@ RSUBMIT;
             ,nam.sic, nam.naics
             ,AT, LT
             ,COALESCE(CEQ, CEQL) AS BVE /* Book Value of Equity */
-            ,DVP + DVC AS Dividends
+            ,COALESCE(DVP,0) + COALESCE(DVC,0) AS Dividends
             ,DLC, DLTT, PSTK /*
             EARN1 = Earnings per share (*/ ,EPSPX /*) 
                      * Common shares to calculate EPS (*/ ,CSHPRI /*)
@@ -94,9 +94,6 @@ RSUBMIT;
         AND DATAFMT='STD' 
         AND POPSRC='D'
         AND CONSOL='C'
-        /*AND DATADATE >= '01JAN1960'd
-        AND DATADATE <= '01JAN2012'd
-        AND nam.sic NOT LIKE "6%"*/
         ORDER BY gvkey, date;
         
         /* Drop firms with one observation and no Book Value of Equity */
@@ -132,6 +129,7 @@ RSUBMIT;
         DATA= funda_2
         OUT= _funda;
     RUN;
+    
     PROC SQL;
         CREATE TABLE m1 AS
         SELECT permno,date
@@ -142,7 +140,8 @@ RSUBMIT;
         FROM crsp.msf
         ORDER BY permno, date;
     QUIT;
-
+    
+    /* Applying Vuolteneeho' s filtering restrictions */
     PROC EXPAND DATA=m1 OUT=m2 FROM=month METHOD=NONE;
         BY permno;
         ID date;
@@ -208,7 +207,7 @@ RSUBMIT;
             END AS linknum
         FROM m2 AS msf
         LEFT JOIN (SELECT * FROM crsp.CCMXPF_LINKTABLE 
-                WHERE linktype in ("LU", "LC", "LD", "LF", "LN", "LO", "LS", "LX"))AS lnk 
+                WHERE linktype in ("LU","LC","LD","LF","LN","LO","LS","LX"))AS lnk 
             ON msf.permno = lnk.lpermno
             AND (linkdt <= msf.date OR linkdt = .B) 
             AND (msf.date <= linkenddt OR linkenddt = .E)
@@ -256,7 +255,7 @@ PROC EXPAND DATA=_funda OUT=fnda_1_interpolate
         FROM=DAY METHOD=SPLINE;
     BY gvkey;
     ID fyear;
-    CONVERT DLC DLTT PSTK;
+    CONVERT DLC PSTK ;*DLTT;
     RUN;
 
 PROC EXPAND DATA=fnda_1_interpolate OUT=fnda_2_fundadiffs 
@@ -283,7 +282,7 @@ PROC EXPAND DATA=fnda_1_interpolate OUT=fnda_2_fundadiffs
 
 DATA fnda_2_fundadiffs;SET fnda_2_fundadiffs;
     dec_fye = 0; 
-        IF MONTH(date) eq 12 
+        IF fye_month eq 12 
             THEN dec_fye = 1;
     past_3_years_bve = 0; 
         IF l1bve*l2bve*l3bve > 0 
@@ -385,7 +384,6 @@ QUIT;
 /*
 Vuolteenaho Recreation:
 
-
 Book Value of equity:
     1) CEQ: Item 60, Common/Ordinary Equity - Total
     2) CEQL: Item 235, Common Equity / Liquidation Value
@@ -398,11 +396,10 @@ Book Debt:
 PROC SQL;
     CREATE TABLE vout_1_vars AS
     SELECT UNIQUE f.gvkey,f.fyear,f.date,m.permno
-        ,f.*
+        ,f.sic,bve,mve
         ,log(1+roe) AS ROE
-		,log(mve/bve ) AS MtB
+		,log(mve/bve) AS MtB
 		,log(1+ret) AS ret
-        ,mve
         ,CASE 
                 WHEN mve/bve > 1/100 AND mve/bve  < 100 THEN vs_acc*vs_eq
                 ELSE 0
