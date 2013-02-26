@@ -318,7 +318,7 @@ DATA fnda_3_vars; SET fnda_2_fundadiffs;
     RUN;
     PROC SORT DATA=fnda_3_vars;BY gvkey fyear;RUN;
 
-*PROC SORT DATA=_msf_linked;BY permno date;RUN;
+*PROC SORT DATA=_msf_linked;*BY permno date;RUN;
 
 /* Use FUNDA to create range for yearly returns based on fyend 
  fyend_num_day_lag is the number of days after fyend to end the yearly return */
@@ -400,6 +400,7 @@ PROC SQL;
         ,log(1+roe) AS ROE
 		,log(mve/bve) AS MtB
 		,log(1+ret) AS ret
+        ,earn1 AS earn, cfo1 AS cfo, ta1 AS ta
         ,CASE 
                 WHEN mve/bve > 1/100 AND mve/bve  < 100 THEN vs_acc*vs_eq
                 ELSE 0
@@ -408,11 +409,12 @@ PROC SQL;
 	LEFT JOIN msf_2_logrets AS m
 		ON f.gvkey = m.gvkey
 		AND f.fyear = m.fyear;
-/*
+
 	CREATE TABLE vout_2_nonempty AS
 	SELECT * FROM vout_1_vars
-	WHERE roe NE . AND mtb NE . AND ret NE .;
-
+	WHERE roe NE . AND mtb NE . AND ret NE .
+        AND ((earn ne . AND cfo ne . AND ta ne .) OR in_vol_sample eq 1);
+    /*
 	CREATE TABLE dropfirms AS
     SELECT DISTINCT permno,gvkey
     FROM (SELECT DISTINCT permno,gvkey FROM vout_2_nonempty)
@@ -426,5 +428,6 @@ PROC SQL;
 	DROP TABLE dropfirms; */
 QUIT;
 
-%EXPORT_STATA(db_in=vout_1_vars,filename="&data_dir/01_vuolteenaho.dta");
+%EXPORT_STATA(db_in=vout_1_vars(WHERE=(in_vol_sample=1)),filename="&data_dir/01_vuolteenaho.dta");
+%EXPORT_STATA(db_in=vout_2_nonempty,filename="&data_dir/02_accdata.dta");
 
