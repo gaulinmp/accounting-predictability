@@ -13,6 +13,8 @@ QUIT;
 %PUT &pwd;
 
 %INCLUDE "&pwd/preamble.sas";
+FILENAME univout "&code_dir/univariate.htm";
+ODS HTML BODY=univout;
 
 %LET divide_month = 8;
 
@@ -29,10 +31,13 @@ Net Income (Vuolteenaho)
 Book Debt:
     1) Current Liabilities(DLC/#34) + Total Long Term Debt(DLTT/#9) + Preferred Stock (PSTK/#130)
     
+    EARN = Earnings per share (EPSPXq) 
+            * Common shares to calculate EPS (CSHPRq)
+
 1)  The Persistence and Pricing of Earnings, Accruals, and Cash Flows When Firms Have Large Book-Tax Differences
     By Michelle Hanlon, TAR 2005
-    EARN1 = Earnings per share (EPSPXq) 
-            * Common shares to calculate EPS (CSHPRq)
+    EARN1 = Net Income (NIq) 
+            + Depreciation (DPq)
     CFO1 = Operating Activities / Net Cash Flow (OANCFy) [Post 1987]
     CFO1 = Funds from Operations (FOPTy) [Pre 1987]
              - Change in Current Assets(ACTq)
@@ -53,10 +58,6 @@ Book Debt:
             + Change in debt inculuded in current liabilties (DLCq)
             + Change in income tax payable (TXPq)
             - Depreciation and amortization expense (DPq)
-
-3) Accruals, cash flows, and aggregate stock returns
-    By David Hirshleifer, Kewei Hou,  Siew Hong Teoh, JFE 2009
-    Variables same as Sloan 1996
 */
 %WRDS("open");
 RSUBMIT;
@@ -69,7 +70,7 @@ RSUBMIT;
             ,COALESCE(CEQ, CEQL) AS BVE /* Book Value of Equity */
             ,COALESCE(DVP,0) + COALESCE(DVC,0) AS Dividends
             ,DLC, DLTT, PSTK /*
-            EARN1 = Earnings per share (*/ ,EPSPX /*) 
+            EARN = Earnings per share (*/ ,EPSPX /*) 
                      * Common shares to calculate EPS (*/ ,CSHPRI /*)
             CFO1 = Operating Activities / Net Cash Flow (*/ ,OANCF /*) [Post 1987]
             CFO1 =  Funds from Operations (*/ ,FOPT /* ) [Pre 1987] 
@@ -258,7 +259,7 @@ PROC EXPAND DATA=_funda OUT=fnda_1_interpolate
     CONVERT DLC PSTK ;*DLTT;
     RUN;
 
-PROC EXPAND DATA=fnda_1_interpolate OUT=fnda_2_fundadiffs 
+PROC EXPAND DATA=fnda_1_interpolate OUT=fnda_1_interpolate 
         FROM=DAY METHOD=NONE;
     BY gvkey;
     ID fyear;
@@ -280,22 +281,26 @@ PROC EXPAND DATA=fnda_1_interpolate OUT=fnda_2_fundadiffs
     RUN;
     OPTIONS NOTES;
 
-DATA fnda_2_fundadiffs;SET fnda_2_fundadiffs;
+DATA fnda_2_fundadiffs;SET fnda_1_interpolate;
+    roe_ge_neg1 = 0;
+        IF COALESCE(NI,dBVE + Dividends)>(dBVE-BVE)
+            THEN roe_ge_neg1 = 1;
     dec_fye = 0; 
         IF fye_month eq 12 
             THEN dec_fye = 1;
     past_3_years_bve = 0; 
-        IF l1bve*l2bve*l3bve > 0 
+        IF l1bve*l2bve*l3bve > 0 AND ABS(l1bve) eq l1bve AND ABS(l2bve) eq l2bve
             THEN past_3_years_bve = 1;
     past_2_years_nidltt = 0; 
         IF lni*l2ni ne . AND ldltt*l2dltt ne .
             THEN past_2_years_nidltt = 1;
-    vs_acc = dec_fye * past_3_years_bve * past_2_years_nidltt;
+    vs_acc = dec_fye * past_3_years_bve * past_2_years_nidltt * roe_ge_neg1;
     DROP l1bve l2bve l3bve lni l2ni ldltt l2dltt;
     RUN;
 
 DATA fnda_3_vars; SET fnda_2_fundadiffs;
-    EARN1 = EPSPX * CSHPRI;
+    EARN = EPSPX * CSHPRI;
+    EARN1 = NI + DP;
     CFO1_Pre1989 = FOPT-dACT-dDLC+dLCT+dCH;
     CFO1_Pre1989_coalesced = FOPT
             -COALESCE(dACT,0)
@@ -314,11 +319,11 @@ DATA fnda_3_vars; SET fnda_2_fundadiffs;
     ROE = .; IF (BVE-dBVE) > 0 THEN
         ROE = COALESCE(NI,dBVE + Dividends)/(BVE-dBVE);
     KEEP gvkey fyear date fye_month sic naics lifespan at lt
-        earn1 cfo1 ta1 earn2 ta2 cfo2 bve roe vs_acc;
+        earn earn1 cfo1 ta1 earn2 ta2 cfo2 bve roe vs_acc;
     RUN;
     PROC SORT DATA=fnda_3_vars;BY gvkey fyear;RUN;
 
-*PROC SORT DATA=_msf_linked;BY permno date;RUN;
+*PROC SORT DATA=_msf_linked;*BY permno date;RUN;
 
 /* Use FUNDA to create range for yearly returns based on fyend 
  fyend_num_day_lag is the number of days after fyend to end the yearly return */
@@ -381,50 +386,37 @@ PROC SQL;
     HAVING date = MAX(date);
 QUIT;
 
-/*
-Vuolteenaho Recreation:
-
-Book Value of equity:
-    1) CEQ: Item 60, Common/Ordinary Equity - Total
-    2) CEQL: Item 235, Common Equity / Liquidation Value
-Net Income (Vuolteenaho)
-    1) NI: Item 172, Net Income (Loss)
-    2) Change in BVE + Dividends (D.BVE + DVP/DVC) (Preferred/Common)
-Book Debt:
-    1) Current Liabilities(DLC/#34) + Total Long Term Debt(DLTT/#9) + Preferred Stock (PSTK/#130)
-*/
+/* Create output datasets by merging msf and funda datasets. */
 PROC SQL;
     CREATE TABLE vout_1_vars AS
     SELECT UNIQUE f.gvkey,f.fyear,f.date,m.permno
-        ,f.sic,bve,mve
+        ,f.sic,bve,mve,at
         ,log(1+roe) AS ROE
-		,log(mve/bve) AS MtB
-		,log(1+ret) AS ret
-        ,CASE 
+        ,log(mve/bve) AS MtB
+        ,log(1+ret) AS ret
+        ,earn AS earn, cfo1 AS cfo, ta1 AS ta
+        ,ranuni(bve*1000) AS randomnum
+        ,LENGTH(firmname) AS namelen
+        ,CASE
                 WHEN mve/bve > 1/100 AND mve/bve  < 100 THEN vs_acc*vs_eq
                 ELSE 0
             END AS in_vol_sample
     FROM fnda_3_vars AS f
-	LEFT JOIN msf_2_logrets AS m
-		ON f.gvkey = m.gvkey
-		AND f.fyear = m.fyear;
-/*
-	CREATE TABLE vout_2_nonempty AS
-	SELECT * FROM vout_1_vars
-	WHERE roe NE . AND mtb NE . AND ret NE .;
+    LEFT JOIN msf_2_logrets AS m
+        ON f.gvkey = m.gvkey
+        AND f.fyear = m.fyear;
 
-	CREATE TABLE dropfirms AS
-    SELECT DISTINCT permno,gvkey
-    FROM (SELECT DISTINCT permno,gvkey FROM vout_2_nonempty)
-    GROUP BY permno
-    HAVING count(*)>1;
-
-	CREATE TABLE vout_3_cleaned AS
-	SELECT * FROM vout_2_nonempty
-	WHERE permno NOT IN (SELECT DISTINCT permno FROM dropfirms);
-
-	DROP TABLE dropfirms; */
+    CREATE TABLE vout_2_nonempty AS
+    SELECT * FROM vout_1_vars
+    WHERE roe NE . AND mtb NE . AND ret NE .
+        AND at ne . AND cfo ne . AND ta ne .;
 QUIT;
 
-%EXPORT_STATA(db_in=vout_1_vars,filename="&data_dir/01_vuolteenaho.dta");
+%EXPORT_STATA(db_in=vout_1_vars(WHERE=(in_vol_sample=1)),filename="&data_dir/01_vuolteenaho.dta");
+%EXPORT_STATA(db_in=vout_2_nonempty,filename="&data_dir/02_accdata.dta");
+
+
+PROC UNIVARIATE DATA=vout_1_vars(WHERE=(in_vol_sample=1));
+    RUN;
+
 
