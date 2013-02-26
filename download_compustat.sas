@@ -17,6 +17,7 @@ QUIT;
 %LET divide_month = 8;
 
 %MACRO DEBUG_already_run();
+%MEND DEBUG_already_run;
 /*
 Variables taken from:
 
@@ -64,7 +65,7 @@ RSUBMIT;
         CREATE TABLE funda_1 AS
         SELECT f.gvkey, f.datadate AS date
             ,f.fyear, f.fyr AS FYE_MONTH
-            ,nam.sic, nam.naics
+            ,nam.sic, nam.naics, f.conm AS firmname
             ,AT, LT
             ,COALESCE(CEQ, CEQL) AS BVE /* Book Value of Equity */
             ,COALESCE(DVP,0) + COALESCE(DVC,0) AS Dividends
@@ -187,7 +188,7 @@ RSUBMIT;
             mve_prev_1_year mve_prev_2_year mve_prev_3_year;
         RUN;
     
-    PROC DOWNLOAD
+    *PROC DOWNLOAD
         DATA= m2
         OUT= _msf;
     RUN; 
@@ -248,7 +249,6 @@ RSUBMIT;
     RUN; 
 ENDRSUBMIT;
 %WRDS("close");
-%MEND DEBUG_already_run;
 
 OPTIONS NONOTES;
 PROC EXPAND DATA=_funda OUT=fnda_1_interpolate 
@@ -314,7 +314,7 @@ DATA fnda_3_vars; SET fnda_2_fundadiffs;
     ROE = .; IF (BVE-dBVE) > 0 THEN
         ROE = COALESCE(NI,dBVE + Dividends)/(BVE-dBVE);
     KEEP gvkey fyear date fye_month sic naics lifespan at lt
-        earn1 cfo1 ta1 earn2 ta2 cfo2 bve roe vs_acc;
+        earn1 cfo1 ta1 earn2 ta2 cfo2 bve roe vs_acc firmname;
     RUN;
     PROC SORT DATA=fnda_3_vars;BY gvkey fyear;RUN;
 
@@ -396,11 +396,13 @@ Book Debt:
 PROC SQL;
     CREATE TABLE vout_1_vars AS
     SELECT UNIQUE f.gvkey,f.fyear,f.date,m.permno
-        ,f.sic,bve,mve
+        ,f.sic,bve,mve,at
         ,log(1+roe) AS ROE
 		,log(mve/bve) AS MtB
 		,log(1+ret) AS ret
         ,earn1 AS earn, cfo1 AS cfo, ta1 AS ta
+        ,ranuni(bve*1000) AS randomnum
+        ,LENGTH(firmname) AS namelen
         ,CASE 
                 WHEN mve/bve > 1/100 AND mve/bve  < 100 THEN vs_acc*vs_eq
                 ELSE 0
@@ -413,7 +415,7 @@ PROC SQL;
 	CREATE TABLE vout_2_nonempty AS
 	SELECT * FROM vout_1_vars
 	WHERE roe NE . AND mtb NE . AND ret NE .
-        AND ((earn ne . AND cfo ne . AND ta ne .) OR in_vol_sample eq 1);
+        AND at ne . AND cfo ne . AND ta ne .;
     /*
 	CREATE TABLE dropfirms AS
     SELECT DISTINCT permno,gvkey
