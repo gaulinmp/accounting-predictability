@@ -76,7 +76,7 @@ title("Pooled OLS Forecasting Regressions.")
 *** Helmert transform, create duplicate forward-differenced copies ***
 helm roe mtb ret ce ae ea
 
-pvar ret roe mtb ce ae , gmm gr_imp
+pvar ret roe mtb ce ae ea , gmm
 
 *** Generate X and Z variables for MATLAB ***
 foreach v of varlist ret mtb roe ce ae { 

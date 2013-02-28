@@ -31,7 +31,7 @@ bysort permno: center ce ae ea, standardize
 *** Helmert transform, create duplicate forward-differenced copies ***
 helm roe mtb ret ce ae ea
 
-pvar ret roe mtb ce ae , gmm gr_imp
+* pvar ret roe mtb ce ae , gmm *gr_imp
 
 *** Generate X and Z variables for MATLAB ***
 foreach v of varlist ret mtb roe ce ae { 
@@ -42,3 +42,4 @@ gen z_`v'=l.`v'
 keep permno fyear ret roe mtb h_ret h_roe h_mtb h_ce h_ae x_ret x_roe x_mtb x_ce x_ae z_ret z_roe z_mtb z_ce z_ae
 order permno fyear ret roe mtb h_ret h_roe h_mtb h_ce h_ae x_ret x_roe x_mtb x_ce x_ae z_ret z_roe z_mtb z_ce z_ae
 saveold "D:\pvar\test.dta",replace
+outsheet * using D:/SAS/test.csv, comma replace

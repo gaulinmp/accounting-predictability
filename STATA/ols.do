@@ -42,6 +42,6 @@ eststo: qui cluster2 ret L_ret L_roe L_mtb  ,nocons fcluster(permno) tcluster(fy
 eststo: qui cluster2 roe L_ret L_roe L_mtb ,nocons fcluster(permno) tcluster(fyear)
 eststo: qui cluster2 mtb L_ret L_roe L_mtb ,nocons fcluster(permno) tcluster(fyear)
 
-esttab, se(a2) star(* 0.10 ** 0.05 *** 0.01) stats(r2 N, fmt(a2 %18.0gc) labels("$ R^2 $" "Obs.")) /// 
+esttab, se(a2) star(* 0.05 ** 0.01 *** 0.001) stats(r2 N, fmt(a2 %18.0gc) labels("$ R^2 $" "Obs.")) /// 
 append  compress nomtitles label booktabs  ///
 title("Pooled OLS Forecasting Regressions.")
