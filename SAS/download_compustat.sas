@@ -67,68 +67,51 @@ RSUBMIT;
         SELECT f.gvkey, f.datadate AS date
             ,f.fyear, f.fyr AS FYE_MONTH
             ,nam.sic, nam.naics, f.conm AS firmname
-            ,AT, LT
-            ,COALESCE(CEQ, CEQL) AS BVE /* Book Value of Equity */
+            ,COALESCE(CEQ, CEQL) + COALESCE(TXDITC,0)
+                + COALESCE(TXP,0) AS BVE /* Book Value of Equity */
             ,COALESCE(DVP,0) + COALESCE(DVC,0) AS Dividends
-            ,DLC, DLTT, PSTK /*
-            EARN = Earnings per share (*/ ,EPSPX /*) 
-                     * Common shares to calculate EPS (*/ ,CSHPRI /*)
-            CFO1 = Operating Activities / Net Cash Flow (*/ ,OANCF /*) [Post 1987]
-            CFO1 =  Funds from Operations (*/ ,FOPT /* ) [Pre 1987] 
-                    - Change in Current Assets(*/ ,ACT /*)
-                    - Change in Debt in Current Liabilities ( DLC )
-                    + Change in Current Liabilities (*/ ,LCT /*)
-                    + Change in Cash (*/ ,CH /*)
-            TA1 = Net Income (*/ ,NI /*) 
-                + Depreciation (*/ ,DP /*)
-                - Cash Flow from Operations ( CFO1)
-            EARN2 = Operating income after depreciation (*/ ,OIADP /*)
-            TA2 = Change in current assets (ACT)
-                    - Change in cash/equivalents (*/ ,CHE /*)
-                    - Change in current liabilities (LCT)
-                    + Change in debt inculuded in current liabilties (DLC)
-                    + Change in income tax payable (*/ ,TXP /*)
-                    - Depreciation and amortization expense (DP)*/
+            ,NI,DLTT,ACT,LCT,CHE,DLC,DP,AT,LT,TXP
+            ,OIADP AS E_BS
+            ,IBC AS E_CF
+            ,OANCF-XIDOC AS CFO_CF
+            ,IBC - (OANCF-XIDOC) AS TA_CF
         FROM comp.funda AS f
         LEFT JOIN comp.NAMES as nam 
             ON f.gvkey = nam.gvkey
-        WHERE INDFMT= 'INDL' 
-        AND DATAFMT='STD' 
-        AND POPSRC='D'
-        AND CONSOL='C'
+        WHERE fyear ne .
+            AND INDFMT= 'INDL' 
+            AND DATAFMT='STD' 
+            AND POPSRC='D'
+            AND CONSOL='C'
+            /* Drop the two firms with duplicated fyears */
+            AND f.gvkey NOT IN ("006557","186121")
         ORDER BY gvkey, date;
-        
-        /* Drop firms with one observation and no Book Value of Equity */
-        CREATE TABLE dropfirms1 AS
-        SELECT UNIQUE count(*) AS drop,gvkey
-        FROM funda_1
-        WHERE fyear NE .
-        GROUP BY gvkey,fyear
-        HAVING drop > 1;
-        
-        CREATE TABLE dropfirms2 AS
-        SELECT UNIQUE SUM(BVE) as drop, gvkey
-        FROM funda_1
-        GROUP BY gvkey
-        HAVING drop eq .;
-
-        CREATE TABLE funda_2 AS
-        SELECT *,count(*) AS lifespan 
-        FROM funda_1
-        WHERE fyear ne . 
-            AND gvkey NOT IN (SELECT gvkey FROM dropfirms1)
-            AND gvkey NOT IN (SELECT gvkey FROM dropfirms2)
-        GROUP BY gvkey
-        ORDER BY gvkey,fyear;
-
-        DELETE FROM funda_2
-        WHERE lifespan < 2;
-
-        DROP TABLE dropfirms1,dropfirms2;	
     QUIT;
-    PROC SORT DATA=funda_2;BY gvkey fyear;RUN;
+
+    OPTIONS NONOTES;
+    PROC EXPAND DATA=funda_1 OUT=funda_2 
+            FROM=DAY METHOD=NONE;
+        BY gvkey;
+        ID fyear;
+        CONVERT act=dact / TRANSFORMOUT=( DIF 1 );
+        CONVERT lct=dlct / TRANSFORMOUT=( DIF 1 );
+        CONVERT dlc=ddlc / TRANSFORMOUT=( DIF 1 );
+        CONVERT che=dche / TRANSFORMOUT=( DIF 1 );
+        CONVERT txp=dtxp / TRANSFORMOUT=( DIF 1 );
+        CONVERT bve=dbve / TRANSFORMOUT=( DIF 1 );
+        CONVERT at =lat  / TRANSFORMOUT=( LAG 1 );
+        RUN;
+        OPTIONS NOTES;
+
+    DATA funda_3;SET funda_2;
+        NI = COALESCE(NI,dbve+Dividends);
+        TA_BS = dact - dlct - dche + ddlc + dtxp - dp;
+        CFO_BS = e_bs - ta_bs;
+        DROP dact dlct ddlc dche dtxp dbve;
+        RUN;
+    PROC SORT DATA=funda_3;BY gvkey fyear;RUN;
     PROC DOWNLOAD
-        DATA= funda_2
+        DATA= funda_3
         OUT= _funda;
     RUN;
     
@@ -143,7 +126,7 @@ RSUBMIT;
         ORDER BY permno, date;
     QUIT;
     
-    /* Applying Vuolteneeho' s filtering restrictions */
+    * Applying Vuolteneehos filtering restrictions;
     PROC EXPAND DATA=m1 OUT=m2 FROM=month METHOD=NONE;
         BY permno;
         ID date;
@@ -189,6 +172,7 @@ RSUBMIT;
             mve_prev_1_year mve_prev_2_year mve_prev_3_year;
         RUN;
     
+    * Create linked FUNDA ;
     *PROC DOWNLOAD
         DATA= m2
         OUT= _msf;
@@ -244,34 +228,23 @@ RSUBMIT;
         DATA= crsp2
         OUT= _msf_linked;
     RUN; 
-    PROC DOWNLOAD
+    *PROC DOWNLOAD
         DATA= crsp.CCMXPF_LINKTABLE
         OUT= _CCMXPF_LINKTABLE;
     RUN; 
 ENDRSUBMIT;
 %WRDS("close");
 
-OPTIONS NONOTES;
-PROC EXPAND DATA=_funda OUT=fnda_1_interpolate 
-        FROM=DAY METHOD=SPLINE;
-    BY gvkey;
-    ID fyear;
-    CONVERT DLC PSTK ;*DLTT;
-    RUN;
 
-PROC EXPAND DATA=fnda_1_interpolate OUT=fnda_1_interpolate 
+
+/*  Create restrictions on FUNDA */
+PROC EXPAND DATA=_funda OUT=fnda_1_interpolate 
         FROM=DAY METHOD=NONE;
     BY gvkey;
     ID fyear;
-    CONVERT act=dact / TRANSFORMOUT=( DIF 1 );
-    CONVERT dlc=ddlc / TRANSFORMOUT=( DIF 1 );
-    CONVERT lct=dlct / TRANSFORMOUT=( DIF 1 );
-    CONVERT ch =dch  / TRANSFORMOUT=( DIF 1 );
-    CONVERT che=dche / TRANSFORMOUT=( DIF 1 );
-    CONVERT txp=dtxp / TRANSFORMOUT=( DIF 1 );
-    CONVERT bve=dbve / TRANSFORMOUT=( DIF 1 );
     CONVERT date=ldate / TRANSFORMOUT=( LAG 1 );
-    CONVERT bve =l1bve / TRANSFORMOUT=( LAG 1 );
+    CONVERT at  =lat   / TRANSFORMOUT=( LAG 1 );
+    CONVERT bve =Lbve  / TRANSFORMOUT=( LAG 1 );
     CONVERT bve =l2bve / TRANSFORMOUT=( LAG 2 );
     CONVERT bve =l3bve / TRANSFORMOUT=( LAG 3 );
     CONVERT ni  =lni   / TRANSFORMOUT=( LAG 1 );
@@ -283,7 +256,7 @@ PROC EXPAND DATA=fnda_1_interpolate OUT=fnda_1_interpolate
 
 DATA fnda_2_fundadiffs;SET fnda_1_interpolate;
     roe_ge_neg1 = 0;
-        IF COALESCE(NI,dBVE + Dividends)>(dBVE-BVE)
+        IF NI>Lbve
             THEN roe_ge_neg1 = 1;
     dec_fye = 0; 
         IF fye_month eq 12 
@@ -295,36 +268,20 @@ DATA fnda_2_fundadiffs;SET fnda_1_interpolate;
         IF lni*l2ni ne . AND ldltt*l2dltt ne .
             THEN past_2_years_nidltt = 1;
     vs_acc = dec_fye * past_3_years_bve * past_2_years_nidltt * roe_ge_neg1;
-    DROP l1bve l2bve l3bve lni l2ni ldltt l2dltt;
+    DROP l2bve l3bve lni l2ni ldltt l2dltt;
     RUN;
 
 DATA fnda_3_vars; SET fnda_2_fundadiffs;
-    EARN = EPSPX * CSHPRI;
-    EARN1 = NI + DP;
-    CFO1_Pre1989 = FOPT-dACT-dDLC+dLCT+dCH;
-    CFO1_Pre1989_coalesced = FOPT
-            -COALESCE(dACT,0)
-            -COALESCE(dDLC,0)
-            +COALESCE(dLCT,0)
-            +COALESCE(dCH ,0);
-    CFO1 = COALESCE(OANCF,CFO1_Pre1989);
-    CFO1_coalesced = COALESCE(CFO1,CFO1_Pre1989_coalesced);
-    TA1 = NI+DP-CFO1;
-    TA1_coalesced = NI+DP-CFO1_coalesced;
-    
-    EARN2 = OIADP;
-    TA2 = dACT - dCHE - dLCT + dDLC + dTXP - DP;
-    CFO2 = EARN2 - TA2;
-    
-    ROE = .; IF (BVE-dBVE) > 0 THEN
-        ROE = COALESCE(NI,dBVE + Dividends)/(BVE-dBVE);
+    ROE = .; IF Lbve > 0 THEN
+        ROE = NI/Lbve;
     KEEP gvkey fyear date fye_month sic naics lifespan at lt
         earn1 cfo1 ta1 earn2 ta2 cfo2 bve roe vs_acc firmname;
     RUN;
     PROC SORT DATA=fnda_3_vars;BY gvkey fyear;RUN;
 
-*PROC SORT DATA=_msf_linked;*BY permno date;RUN;
-
+    
+    
+    
 /* Use FUNDA to create range for yearly returns based on fyend 
  fyend_num_day_lag is the number of days after fyend to end the yearly return */
 %LET fyend_num_month_lag = 4;
@@ -370,7 +327,7 @@ PROC SQL;
         AND m.date ge f.ret_beg 
         AND m.date le f.ret_end;
     
-    *DROP TABLE tmp_1, tmp_2;
+    DROP TABLE tmp_1, tmp_2;
 QUIT;
 
 PROC SQL;
@@ -386,6 +343,11 @@ PROC SQL;
     HAVING date = MAX(date);
 QUIT;
 
+
+
+
+
+
 /* Create output datasets by merging msf and funda datasets. */
 PROC SQL;
     CREATE TABLE vout_1_vars AS
@@ -394,7 +356,7 @@ PROC SQL;
         ,log(1+roe) AS ROE
         ,log(mve/bve) AS MtB
         ,log(1+ret) AS ret
-        ,earn AS earn, cfo1 AS cfo, ta1 AS ta
+        ,e_bs,e_cf,cfo_bs,cfo_cf,ta_bs,ta_cf
         ,ranuni(bve*1000) AS randomnum
         ,LENGTH(firmname) AS namelen
         ,CASE
@@ -407,13 +369,17 @@ PROC SQL;
         AND f.fyear = m.fyear;
 
     CREATE TABLE vout_2_nonempty AS
-    SELECT * FROM vout_1_vars
-    WHERE roe NE . AND mtb NE . AND ret NE .
-        AND at ne . AND cfo ne . AND ta ne .;
-    
+    SELECT * 
+    FROM vout_1_vars
+    WHERE roe NE . 
+        AND mtb NE . 
+        AND ret NE .;
 QUIT;
-%EXPORT_STATA(db_in=vout_1_vars(WHERE=(in_vol_sample=1)), filename = "&data_dir/01_vuolteenaho.dta");
-%EXPORT_STATA(db_in=vout_2_nonempty,filename="&data_dir/02_accdata.dta");
+
+%EXPORT_STATA(db_in=vout_1_vars(WHERE=(in_vol_sample=1)), filename = "&data_dir/03_vuolteenaho.dta");
+%EXPORT_STATA(db_in=vout_2_nonempty,filename="&data_dir/04_accdata.dta");
+
+ENDSAS;
 
 PROC UNIVARIATE DATA=vout_1_vars(WHERE=(in_vol_sample=1));
     RUN;
