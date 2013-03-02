@@ -67,6 +67,7 @@ RSUBMIT;
         SELECT f.gvkey, f.datadate AS date
             ,f.fyear, f.fyr AS FYE_MONTH
             ,nam.sic, nam.naics, f.conm AS firmname
+            ,COALESCE(CEQ, CEQL) AS BVE_old
             ,COALESCE(CEQ, CEQL) + COALESCE(TXDITC,0)
                 + COALESCE(TXP,0) AS BVE /* Book Value of Equity */
             ,COALESCE(DVP,0) + COALESCE(DVC,0) AS Dividends
@@ -245,6 +246,7 @@ PROC EXPAND DATA=_funda OUT=fnda_1_interpolate
     CONVERT date=ldate / TRANSFORMOUT=( LAG 1 );
     CONVERT at  =lat   / TRANSFORMOUT=( LAG 1 );
     CONVERT bve =Lbve  / TRANSFORMOUT=( LAG 1 );
+    CONVERT bve_old =Lbveo  / TRANSFORMOUT=( LAG 1 );
     CONVERT bve =l2bve / TRANSFORMOUT=( LAG 2 );
     CONVERT bve =l3bve / TRANSFORMOUT=( LAG 3 );
     CONVERT ni  =lni   / TRANSFORMOUT=( LAG 1 );
@@ -256,13 +258,13 @@ PROC EXPAND DATA=_funda OUT=fnda_1_interpolate
 
 DATA fnda_2_fundadiffs;SET fnda_1_interpolate;
     roe_ge_neg1 = 0;
-        IF NI>Lbve
+        IF ABS(NI)<Lbve OR NI > 0
             THEN roe_ge_neg1 = 1;
     dec_fye = 0; 
         IF fye_month eq 12 
             THEN dec_fye = 1;
     past_3_years_bve = 0; 
-        IF l1bve*l2bve*l3bve > 0 AND ABS(l1bve) eq l1bve AND ABS(l2bve) eq l2bve
+        IF Lbve*l2bve*l3bve > 0 AND ABS(Lbve) eq Lbve AND ABS(l2bve) eq l2bve
             THEN past_3_years_bve = 1;
     past_2_years_nidltt = 0; 
         IF lni*l2ni ne . AND ldltt*l2dltt ne .
@@ -274,8 +276,11 @@ DATA fnda_2_fundadiffs;SET fnda_1_interpolate;
 DATA fnda_3_vars; SET fnda_2_fundadiffs;
     ROE = .; IF Lbve > 0 THEN
         ROE = NI/Lbve;
-    KEEP gvkey fyear date fye_month sic naics lifespan at lt
-        earn1 cfo1 ta1 earn2 ta2 cfo2 bve roe vs_acc firmname;
+    ROEo = .; IF Lbveo > 0 THEN
+        ROEo = NI/Lbveo;
+    KEEP gvkey fyear date fye_month sic naics at lt
+        e_cf cfo_cf ta_cf e_bs cfo_bs ta_bs
+		bve bve_old roe roeo vs_acc firmname;
     RUN;
     PROC SORT DATA=fnda_3_vars;BY gvkey fyear;RUN;
 
@@ -352,9 +357,11 @@ QUIT;
 PROC SQL;
     CREATE TABLE vout_1_vars AS
     SELECT UNIQUE f.gvkey,f.fyear,f.date,m.permno
-        ,f.sic,bve,mve,at
+        ,f.sic,bve,bve_old AS bveo,mve,at
         ,log(1+roe) AS ROE
+        ,log(1+roeo) AS ROEo
         ,log(mve/bve) AS MtB
+        ,log(mve/bve_old) AS MtBo
         ,log(1+ret) AS ret
         ,e_bs,e_cf,cfo_bs,cfo_cf,ta_bs,ta_cf
         ,ranuni(bve*1000) AS randomnum
@@ -376,10 +383,10 @@ PROC SQL;
         AND ret NE .;
 QUIT;
 
-%EXPORT_STATA(db_in=vout_1_vars(WHERE=(in_vol_sample=1)), filename = "&data_dir/03_vuolteenaho.dta");
-%EXPORT_STATA(db_in=vout_2_nonempty,filename="&data_dir/04_accdata.dta");
+%EXPORT_STATA(db_in=vout_1_vars(WHERE=(in_vol_sample=1)), filename = "&data_dir/05_vuolteenaho.dta");
+%EXPORT_STATA(db_in=vout_2_nonempty,filename="&data_dir/06_accdata.dta");
 
-ENDSAS;
+*ENDSAS;
 
 PROC UNIVARIATE DATA=vout_1_vars(WHERE=(in_vol_sample=1));
     RUN;

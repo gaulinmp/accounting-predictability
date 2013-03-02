@@ -1,8 +1,10 @@
-use E:\Dropbox\Return_Predictability_of_Earnings\data\02_accdata.dta,clear
+cd D:\Dropbox\Documents\School\Projects\Return_Predictability_of_Earnings
+use data/02_accdata.dta,clear
 drop if ret == .
 xtset permno fyear
 
 drop if in_vol_sample == 0
+
 
 gen ce = cfo/at
 gen ae = ta/at
@@ -38,10 +40,10 @@ label var L_mtb "$ mb_t $"
 *** Naive OLS ***
 sort permno fyear
 estimates clear
-eststo: qui cluster2 ret L_ret L_roe L_mtb  ,nocons fcluster(permno) tcluster(fyear)
-eststo: qui cluster2 roe L_ret L_roe L_mtb ,nocons fcluster(permno) tcluster(fyear)
-eststo: qui cluster2 mtb L_ret L_roe L_mtb ,nocons fcluster(permno) tcluster(fyear)
+eststo: qui cluster2 ret L_ret L_roe L_mtb  , fcluster(permno) tcluster(fyear)
+eststo: qui cluster2 roe L_ret L_roe L_mtb , fcluster(permno) tcluster(fyear)
+eststo: qui cluster2 mtb L_ret L_roe L_mtb , fcluster(permno) tcluster(fyear)
 
-esttab, se(a2) star(* 0.05 ** 0.01 *** 0.001) stats(r2 N, fmt(a2 %18.0gc) labels("$ R^2 $" "Obs.")) /// 
-append  compress nomtitles label booktabs  ///
+esttab, se(a2) star(* 0.10 ** 0.05 *** 0.01) stats(r2 N, fmt(a2 %18.0gc) labels("$ R^2 $" "Obs.")) /// 
+append  compress nomtitles label ///
 title("Pooled OLS Forecasting Regressions.")
