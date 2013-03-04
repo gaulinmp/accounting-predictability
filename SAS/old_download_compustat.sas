@@ -126,7 +126,7 @@ PROC SQL;
 QUIT;
 
 OPTIONS NONOTES;
-PROC EXPAND DATA=funda_1 OUT=funda_2 
+PROC EXPAND DATA=funda_2 OUT=funda_3 
         FROM=DAY METHOD=NONE;
     BY gvkey;
     ID fyear;
@@ -140,7 +140,7 @@ PROC EXPAND DATA=funda_1 OUT=funda_2
     RUN;
     OPTIONS NOTES;
 
-DATA _funda;SET funda_2;
+DATA _funda;SET funda_3;
     NI = COALESCE(NI,dbve+Dividends);
     TA_BS = dact - dlct - dche + ddlc + dtxp - dp;
     CFO_BS = e_bs - ta_bs;
@@ -401,13 +401,12 @@ QUIT;
 PROC SQL;
     CREATE TABLE vout_1_vars AS
     SELECT UNIQUE f.gvkey,f.fyear,f.date,m.permno
-        ,f.sic,bve,bve_old AS bveo,mve,at
+        ,f.sic,bve,mve,at
         ,log(1+roe) AS ROE
-        ,log(1+roeo) AS ROEo
         ,log(mve/bve) AS MtB
-        ,log(mve/bve_old) AS MtBo
         ,log(1+ret) AS ret
-        ,e_bs,e_cf,cfo_bs,cfo_cf,ta_bs,ta_cf
+        ,earn1 AS earn, cfo1 AS cfo, ta1 AS ta
+        /*,e_bs,e_cf,cfo_bs,cfo_cf,ta_bs,ta_cf */
         ,ranuni(bve*1000) AS randomnum
         ,LENGTH(firmname) AS namelen
         ,CASE
@@ -427,14 +426,7 @@ PROC SQL;
         AND ret NE .;
 QUIT;
 
-%EXPORT_STATA(db_in=vout_1_vars(WHERE=(in_vol_sample=1)), filename = "&data_dir/05_vuolteenaho.dta");
-%EXPORT_STATA(db_in=vout_2_nonempty,filename="&data_dir/06_accdata.dta");
+%EXPORT_STATA(db_in=vout_1_vars(WHERE=(in_vol_sample=1)), filename = "&data_dir/07_old_vuolteenaho.dta");
+%EXPORT_STATA(db_in=vout_2_nonempty,filename="&data_dir/08_old_accdata.dta");
 
-*ENDSAS;
-
-PROC UNIVARIATE DATA=vout_1_vars(WHERE=(in_vol_sample=1));
-    RUN;
-PROC UNIVARIATE DATA=vout_2_nonempty(WHERE=(in_vol_sample=1));
-    RUN;
-
-
+ENDSAS;
