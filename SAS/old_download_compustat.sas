@@ -327,7 +327,7 @@ DATA fnda_3_vars; SET fnda_2_fundadiffs;
     ROE = .; IF (BVE-dBVE) > 0 THEN
         ROE = COALESCE(NI,dBVE + Dividends)/(BVE-dBVE);
     KEEP gvkey fyear date fye_month sic naics lifespan at lt
-        earn1 cfo1 ta1 earn2 ta2 cfo2 bve roe vs_acc firmname;
+        earn earn1 cfo1 ta1 earn2 ta2 cfo2 bve roe vs_acc firmname;
     RUN;
     PROC SORT DATA=fnda_3_vars;BY gvkey fyear;RUN;
 
