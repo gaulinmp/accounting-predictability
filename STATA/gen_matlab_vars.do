@@ -1,24 +1,27 @@
-use "E:\Dropbox\Research\Return_Predictability_of_Earnings\data\vout_1_vars.dta",clear
+use E:\Dropbox\Research\Return_Predictability_of_Earnings\data\02_only_vuolteenaho.dta,clear
+*use "E:\Dropbox\Research\Return_Predictability_of_Earnings\data\vout_1_vars.dta",clear
 drop if ret == .
 xtset permno fyear
 
 drop if in_vol_sample == 0
 
 global N = 6958
+macro drop myvars h_myvars x_myvars z_myvars filters
+global myvars ret roe mtb
+global filters if fyear >= 1954 & fyear <= 2011
 
-gen ce = cfo/at
-gen ae = ta/at
-gen ea = earn/at
+keep $filters
+
+*gen ce = cfo/at
+*gen ae = ta/at
+*gen ea = earn/at
 
 label var ret "Returns"
 label var roe "Profitability"
 label var mtb "Market-to-Book"
-label var ea "Earnings/Assets"
-label var ce "Cash Flows/Assets"
-label var ae "Accruals/Assets"
-
-macro drop myvars h_myvars x_myvars z_myvars
-global myvars ret roe mtb
+*label var ea "Earnings/Assets"
+*label var ce "Cash Flows/Assets"
+*label var ae "Accruals/Assets"
 
 *bysort fyear: egen weight = pc(mve), prop
 gen weight = 1
