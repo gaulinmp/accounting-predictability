@@ -124,7 +124,9 @@ PROC SQL;
 
     DROP TABLE dropfirms1,dropfirms2;	
 QUIT;
-
+DATA _funda;SET funda_2;
+    RUN;
+/*
 OPTIONS NONOTES;
 PROC EXPAND DATA=funda_2 OUT=funda_3 
         FROM=DAY METHOD=NONE;
@@ -141,12 +143,13 @@ PROC EXPAND DATA=funda_2 OUT=funda_3
     OPTIONS NOTES;
 
 DATA _funda;SET funda_3;
-    NI = COALESCE(NI,dbve+Dividends);
+    *NI = COALESCE(NI,dbve+Dividends);
     TA_BS = dact - dlct - dche + ddlc + dtxp - dp;
     CFO_BS = e_bs - ta_bs;
     DROP dact dlct ddlc dche dtxp dbve;
     RUN;
 PROC SORT DATA=_funda;BY gvkey fyear;RUN;
+*/
 
 PROC SQL;
     CREATE TABLE m1 AS
