@@ -48,7 +48,7 @@ QUIT;
 %end;  %else %do; %put WRDS files exist; %end;
 %MEND DEBUG_already_run;
 
-
+        
 
 
 /* Create accounting data tables from FUNDA. */
@@ -57,9 +57,17 @@ PROC SQL;
     SELECT f.gvkey, f.datadate AS date
         ,f.fyear, f.fyr AS FYE_MONTH
         ,nam.sic, nam.naics, f.conm AS firmname
-        ,COALESCE(CEQ, CEQL) AS BVEo
-        ,COALESCE(CEQ, CEQL) + COALESCE(TXDITC,0)
-            + COALESCE(TXP,0) AS BVE /* Book Value of Equity */
+        /* ,COALESCE(CEQ, CEQL) + COALESCE(TXDITC,0)
+            + COALESCE(TXP,0) AS BVE  Book Value of Equity */
+        ,case 
+                when SEQ is not null then SEQ 
+                when CEQ is not null and PSTK is not null then CEQ + PSTK
+                when AT is not null and LT is not null then AT-LT else -999 
+            end as SHE
+        ,case 
+                when calculated SHE > -999 then calculated SHE + coalesce(TXDITC, TXDB,0) - coalesce(PSTKRV,PSTKL,PSTK,0) 
+                else COALESCE(CEQ, CEQL) + COALESCE(TXDITC,0) + COALESCE(TXP,0) 
+            end as BVE
         ,COALESCE(DVP,0) + COALESCE(DVC,0) AS Dividends
         ,NI,DLTT,ACT,LCT,CHE,DLC,DP,AT,LT,TXP
         ,EPSPX * CSHPRI AS E_EPS
@@ -109,6 +117,7 @@ PROC SQL;
 QUIT;
 
 /*  Create restrictions on FUNDA */
+OPTIONS NONOTES;
 PROC EXPAND DATA=_funda OUT=fnda_1_interpolate 
         FROM=DAY METHOD=NONE;
     BY gvkey;
@@ -116,7 +125,6 @@ PROC EXPAND DATA=_funda OUT=fnda_1_interpolate
     CONVERT date=ldate / TRANSFORMOUT=( LAG 1 );
     CONVERT at  =lat   / TRANSFORMOUT=( LAG 1 );
     CONVERT bve =Lbve  / TRANSFORMOUT=( LAG 1 );
-    CONVERT bveo =Lbveo  / TRANSFORMOUT=( LAG 1 );
     CONVERT bve =l2bve / TRANSFORMOUT=( LAG 2 );
     CONVERT bve =l3bve / TRANSFORMOUT=( LAG 3 );
     CONVERT ni  =lni   / TRANSFORMOUT=( LAG 1 );
@@ -146,11 +154,9 @@ DATA fnda_2_fundadiffs;SET fnda_1_interpolate;
 DATA fnda_3_vars; SET fnda_2_fundadiffs;
     ROE = .; IF Lbve > 0 THEN
         ROE = NI/Lbve;
-    ROEo = .; IF Lbveo > 0 THEN
-        ROEo = NI/Lbveo;
     KEEP gvkey fyear date fye_month sic naics at lt
         e_cf cfo_cf ta_cf e_bs cfo_bs ta_bs e_eps
-		bve bveo roe roeo vs_acc firmname;
+		bve roe vs_acc firmname;
     RUN;
     PROC SORT DATA=fnda_3_vars;BY gvkey fyear;RUN;
 
@@ -339,11 +345,9 @@ QUIT;
 PROC SQL;
     CREATE TABLE vout_1_vars AS
     SELECT UNIQUE f.gvkey,f.fyear,f.date,m.permno
-        ,f.sic,bve,bveo AS bveo,mve,at
+        ,f.sic,bve,mve,at
         ,log(1+roe) AS ROE
-        ,log(1+roeo) AS ROEo
         ,log(mve/bve) AS MtB
-        ,log(mve/bveo) AS MtBo
         ,log(1+ret) AS ret
         ,e_bs,e_cf,cfo_bs,cfo_cf,ta_bs,ta_cf
         ,ranuni(bve*1000) AS randomnum
