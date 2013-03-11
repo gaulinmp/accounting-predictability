@@ -364,9 +364,8 @@ PROC SQL;
     CREATE TABLE vout_2_nonempty AS
     SELECT * 
     FROM vout_1_vars
-    WHERE roe NE . 
-        AND mtb NE . 
-        AND ret NE .;
+    GROUP BY gvkey
+    HAVING MIN(roe * mtb * ret) ne .;
 QUIT;
 
 %EXPORT_STATA(db_in=vout_1_vars(WHERE=(in_vol_sample=1)), filename = "&data_dir/09_vuolteenaho.dta");
