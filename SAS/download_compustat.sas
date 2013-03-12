@@ -57,17 +57,22 @@ PROC SQL;
     SELECT f.gvkey, f.datadate AS date
         ,f.fyear, f.fyr AS FYE_MONTH
         ,nam.sic, nam.naics, f.conm AS firmname
-        /* ,COALESCE(CEQ, CEQL) + COALESCE(TXDITC,0)
-            + COALESCE(TXP,0) AS BVE  Book Value of Equity */
+        /* Book Value of Equity * /
+        ,COALESCE(CEQ, CEQL) AS BVE /*+ COALESCE(TXDITC,0)
+            + COALESCE(TXP,0) AS BVE  
         ,case 
                 when SEQ is not null then SEQ 
                 when CEQ is not null and PSTK is not null then CEQ + PSTK
                 when AT is not null and LT is not null then AT-LT else -999 
             end as SHE
         ,case 
-                when calculated SHE > -999 then calculated SHE + coalesce(TXDITC, TXDB,0) - coalesce(PSTKRV,PSTKL,PSTK,0) 
+                when calculated SHE > -999 then calculated SHE + COALESCE(TXDITC, TXDB,0) - coalesce(PSTKRV,PSTKL,PSTK,0) 
                 else COALESCE(CEQ, CEQL) + COALESCE(TXDITC,0) + COALESCE(TXP,0) 
-            end as BVE
+            end as BVE */
+        ,COALESCE(
+                    COALESCE(SEQ,CEQ+PSTK,AT-LT)+COALESCE(TXDITC, TXDB,0) - COALESCE(PSTKRV,PSTKL,PSTK,0)
+                   ,COALESCE(CEQ,CEQL) - COALESCE(PSTKRV,PSTKL,PSTK,0)
+                 ) AS BVE
         ,COALESCE(DVP,0) + COALESCE(DVC,0) AS Dividends
         ,NI,DLTT,ACT,LCT,CHE,DLC,DP,AT,LT,TXP
         ,EPSPX * CSHPRI AS E_EPS
@@ -156,7 +161,7 @@ DATA fnda_3_vars; SET fnda_2_fundadiffs;
         ROE = NI/Lbve;
     KEEP gvkey fyear date fye_month sic naics at lt
         e_cf cfo_cf ta_cf e_bs cfo_bs ta_bs e_eps
-		bve roe vs_acc firmname;
+		bve roe vs_acc firmname dividends;
     RUN;
     PROC SORT DATA=fnda_3_vars;BY gvkey fyear;RUN;
 
@@ -314,7 +319,7 @@ PROC SQL;
     /* Use return beginning and end range to join fyear to DSF */
     CREATE TABLE msf_1_fyear AS
     SELECT m.*,f.fyear
-    FROM (SELECT gvkey, permno, date, prc,shrout,ret,mve,vol,vs_eq FROM &msf) AS m
+    FROM (SELECT gvkey, permno, date, prc,shrout,ret,retx,mve,vol,vs_eq FROM &msf) AS m
     LEFT JOIN tmp_2 AS f
         ON m.gvkey = f.gvkey
         AND m.date ge f.ret_beg 
@@ -327,6 +332,7 @@ PROC SQL;
     CREATE TABLE msf_2_logrets AS
     SELECT DISTINCT gvkey,permno,fyear
         ,EXP(SUM(LOG(1+RET)))-1 AS ret
+        ,EXP(SUM(LOG(1+RET)))-1 AS retx
         ,prc,shrout,vol,date,mve,vs_eq, COUNT(*) AS nummonths
     FROM msf_1_fyear
     WHERE date ne . 
@@ -350,6 +356,7 @@ PROC SQL;
         ,log(mve/bve) AS MtB
         ,log(1+ret) AS ret
         ,e_bs,e_cf,cfo_bs,cfo_cf,ta_bs,ta_cf
+        ,dividends,retx,ret AS rawret,shrout
         ,ranuni(bve*1000) AS randomnum
         ,LENGTH(firmname) AS namelen
         ,CASE
@@ -372,10 +379,10 @@ QUIT;
 %EXPORT_STATA(db_in=vout_2_nonempty,filename="&data_dir/10_accdata.dta");
 
 *ENDSAS;
-
+/*
 PROC UNIVARIATE DATA=vout_1_vars(WHERE=(in_vol_sample=1));
     RUN;
 PROC UNIVARIATE DATA=vout_2_nonempty(WHERE=(in_vol_sample=1));
     RUN;
-
+*/
 
